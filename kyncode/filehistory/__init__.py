@@ -1,1 +1,3 @@
-"""kyncode.filehistory - File snapshot history for rewind support."""
+from kyncode.filehistory.history import FileHistory, Snapshot
+
+__all__ = ["FileHistory", "Snapshot"]
