@@ -185,7 +185,9 @@ class ToolRegistry:
         return schemas
 
 
-def create_default_registry(file_history: Any = None) -> ToolRegistry:
+def create_default_registry(
+    file_history: Any = None, web_access: bool = True
+) -> ToolRegistry:
     from kyncode.tools.bash import Bash
     from kyncode.tools.edit_file import EditFile
     from kyncode.tools.file_state_cache import FileStateCache
@@ -207,4 +209,12 @@ def create_default_registry(file_history: Any = None) -> ToolRegistry:
     registry.register(Bash())
     registry.register(Glob())
     registry.register(Grep())
+
+    # 联网工具按配置开关，默认开。想完全断网就在配置里把 web_access 设为 false。
+    if web_access:
+        from kyncode.tools.web_fetch import WebFetch
+        from kyncode.tools.web_search import WebSearch
+
+        registry.register(WebSearch())
+        registry.register(WebFetch())
     return registry

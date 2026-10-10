@@ -35,3 +35,5 @@ mcp_servers:
   #     Authorization: "Bearer ${MY_TOKEN}"
 
 enable_coordinator_mode: false   # 设为 true 后创建 Team 时 Lead 只能调度不能写代码
+
+web_access: true   # 是否给 Agent 注册联网工具（WebSearch / WebFetch），默认 true

@@ -116,6 +116,7 @@ def main() -> None:
         enable_coordinator_mode=config.enable_coordinator_mode,
         driver_class=NoAltScreenDriver,
         sandbox_config=config.sandbox,
+        web_access=config.web_access,
     )
     # TUI 内部的异常由 App._handle_exception 落盘，这里兜住的是框架之外的部分：
     # 启动、事件循环收尾，以及 Textual 自身抛出的异常

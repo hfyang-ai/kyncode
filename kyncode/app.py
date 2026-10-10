@@ -700,6 +700,7 @@ class KynCodeApp(App):
         enable_coordinator_mode: bool = False,
         driver_class: type | None = None,
         sandbox_config: Any = None,
+        web_access: bool = True,
     ) -> None:
         super().__init__(driver_class=driver_class)
         self.providers = providers
@@ -716,7 +717,9 @@ class KynCodeApp(App):
         self._sandbox_cfg: SandboxAppConfig = sandbox_config or SandboxAppConfig()
         self.client: LLMClient | None = None
         self.conversation = ConversationManager()
-        self.registry: ToolRegistry = create_default_registry()
+        self.registry: ToolRegistry = create_default_registry(
+            web_access=web_access
+        )
         self.agent: Agent | None = None
         self.mcp_manager: MCPManager | None = None
         self._mcp_init_task: asyncio.Task[None] | None = None

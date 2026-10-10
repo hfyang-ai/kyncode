@@ -142,6 +142,8 @@ class AppConfig:
     teammate_mode: str = ""
     enable_coordinator_mode: bool = False
     sandbox: SandboxAppConfig = field(default_factory=SandboxAppConfig)
+    # 是否给 Agent 注册联网工具（WebSearch / WebFetch）。默认开。
+    web_access: bool = True
 
 
 def _load_single_file(path: Path) -> AppConfig:
@@ -203,6 +205,7 @@ def _load_single_file(path: Path) -> AppConfig:
         teammate_mode=validated["teammate_mode"],
         enable_coordinator_mode=validated["enable_coordinator_mode"],
         sandbox=sandbox_cfg,
+        web_access=validated["web_access"],
     )
 
 
@@ -238,6 +241,9 @@ def _merge_config(base: AppConfig, override: AppConfig) -> AppConfig:
         base.sandbox.auto_allow = True
     if override.sandbox.network_enabled:
         base.sandbox.network_enabled = True
+    # web_access 默认开，和 enable_fork 同理不能用「非零即覆盖」，
+    # 否则配置里写 false 关不掉联网工具。
+    base.web_access = override.web_access
     return base
 
 

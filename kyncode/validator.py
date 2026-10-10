@@ -252,7 +252,7 @@ def validate_config_structure(raw: object) -> dict:
     返回的字典包含以下键：
         providers、permission_mode、mcp_servers、hooks、
         enable_fork、enable_verification_agent、worktree、
-        teammate_mode、enable_coordinator_mode、sandbox
+        teammate_mode、enable_coordinator_mode、sandbox、web_access
     """
     if not isinstance(raw, dict) or "providers" not in raw:
         raise ConfigError("Config must contain a 'providers' list")
@@ -274,4 +274,7 @@ def validate_config_structure(raw: object) -> dict:
             raw.get("enable_coordinator_mode", False), "enable_coordinator_mode"
         ),
         "sandbox": validate_sandbox(raw.get("sandbox")),
+        "web_access": validate_bool_field(
+            raw.get("web_access", True), "web_access"
+        ),
     }
