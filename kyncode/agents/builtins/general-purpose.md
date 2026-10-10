@@ -1,6 +1,6 @@
 ---
 name: general-purpose
-description: 通用子 Agent，拥有全部工具，用于需要完整能力但独立上下文的场景
+description: General-purpose sub-agent with the full tool set, for tasks that need complete capability in an isolated context
 disallowedTools: []
 ---
 

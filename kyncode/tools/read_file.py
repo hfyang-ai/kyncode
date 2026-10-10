@@ -21,7 +21,10 @@ class Params(BaseModel):
 
 class ReadFile(Tool):
     name = "ReadFile"
-    description = "Read a file and return its contents with line numbers."
+    description = (
+        "Read a file and return its contents with line numbers. Use offset and limit to read "
+        "a large file in chunks instead of loading it all at once."
+    )
     params_model = Params
     category = "read"
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kyncode.teams import protocol
 from kyncode.tools.base import Tool, ToolResult
@@ -15,12 +15,24 @@ log = logging.getLogger(__name__)
 
 
 class SendMessageParams(BaseModel):
-    to: str
-    content: str
-    type: str = "text"
+    to: str = Field(
+        description="Recipient teammate name or agent ID; use '*' to broadcast to all teammates"
+    )
+    content: str = Field(
+        description="Message content. For plan_approval_response with approve=false, put rejection feedback here"
+    )
+    type: str = Field(
+        default="text",
+        description="Message type, e.g. text, shutdown_request, shutdown_response, plan_approval_response",
+    )
     # 结构化消息用：request_id 让应答对上请求，approve 是表态
-    request_id: str = ""
-    approve: bool | None = None
+    request_id: str = Field(
+        default="",
+        description="For structured messages, links a response to the request it answers",
+    )
+    approve: bool | None = Field(
+        default=None, description="For structured messages, approve (true) or reject (false) the request"
+    )
 
 
 VALID_MESSAGE_TYPES = protocol.VALID_MESSAGE_TYPES

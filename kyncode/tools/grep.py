@@ -18,7 +18,10 @@ class Params(BaseModel):
 
 class Grep(Tool):
     name = "Grep"
-    description = "Search file contents using a regex pattern, returning file:line:content matches."
+    description = (
+        "Search file contents with a regex pattern, returning matches as 'file:line:content'. "
+        "Searches recursively by default; use include to filter filenames (e.g. '*.py')."
+    )
     params_model = Params
     category = "read"
 

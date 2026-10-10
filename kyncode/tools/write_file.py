@@ -19,8 +19,9 @@ class Params(BaseModel):
 class WriteFile(Tool):
     name = "WriteFile"
     description = (
-        "Write content to a file, creating parent directories if needed. Overwrites existing files.\n"
-        "You MUST read existing files with ReadFile before overwriting them. This tool will fail otherwise."
+        "Write content to a file, creating the file and any missing parent directories. Overwrites "
+        "existing files. You MUST read an existing file with ReadFile before overwriting it, "
+        "or this tool will fail."
     )
     params_model = Params
     category = "write"

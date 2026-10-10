@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kyncode.tools.base import Tool, ToolResult
 
@@ -11,18 +11,26 @@ if TYPE_CHECKING:
 
 
 class TaskCreateParams(BaseModel):
-    title: str
-    description: str = ""
-    assignee: str = ""
-    blocks: list[str] | None = None
-    blocked_by: list[str] | None = None
+    title: str = Field(description="Short, actionable task title")
+    description: str = Field(default="", description="Detailed description of the task")
+    assignee: str = Field(
+        default="", description="Agent name to assign the task to (empty = unassigned)"
+    )
+    blocks: list[str] | None = Field(
+        default=None,
+        description="IDs of tasks this one blocks (they start only after this completes)",
+    )
+    blocked_by: list[str] | None = Field(
+        default=None,
+        description="IDs of tasks that block this one (it starts only after they complete)",
+    )
 
 
 class TaskCreateTool(Tool):
     name = "TaskCreate"
     description = (
-        "Create a shared task in the team's task board. "
-        "Supports dependency tracking with blocks/blocked_by fields."
+        "Create a task in the shared team task board. Use blocks/blocked_by to declare "
+        "dependencies on other task IDs (see field descriptions)."
     )
     params_model = TaskCreateParams
     category = "command"

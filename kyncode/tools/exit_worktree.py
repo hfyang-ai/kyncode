@@ -28,8 +28,9 @@ class ExitWorktreeParams(BaseModel):
 class ExitWorktreeTool(Tool):
     name = "ExitWorktree"
     description = (
-        "Exits a worktree session created by EnterWorktree and restores "
-        "the original working directory"
+        "Exit the worktree session created by EnterWorktree and restore the original working "
+        "directory. Use action='keep' to preserve the worktree and branch on disk, or action='remove' "
+        "to delete them (requires discard_changes=true when there are uncommitted changes)."
     )
     params_model = ExitWorktreeParams
     category = "command"

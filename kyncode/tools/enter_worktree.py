@@ -26,7 +26,8 @@ class EnterWorktreeParams(BaseModel):
 class EnterWorktreeTool(Tool):
     name = "EnterWorktree"
     description = (
-        "Creates an isolated worktree (via git) and switches the session into it"
+        "Create an isolated git worktree and switch the session into it, so experimental changes "
+        "stay out of the main working directory. Use ExitWorktree to leave it."
     )
     params_model = EnterWorktreeParams
     category = "command"

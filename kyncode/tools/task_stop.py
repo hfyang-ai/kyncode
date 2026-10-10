@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kyncode.tools.base import Tool, ToolResult
 
@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 
 
 class TaskStopParams(BaseModel):
-    teammate: str
+    teammate: str = Field(
+        description="Name of the teammate to stop, as it appears in the from= field of a team-notification"
+    )
 
 
 class TaskStopTool(Tool):

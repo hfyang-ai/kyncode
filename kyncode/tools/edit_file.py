@@ -23,8 +23,9 @@ class Params(BaseModel):
 class EditFile(Tool):
     name = "EditFile"
     description = (
-        "Replace an exact string in a file. The old_string must appear exactly once in the file.\n"
-        "You MUST read the file with ReadFile before editing. This tool will fail otherwise."
+        "Replace one exact string with another in a file. old_string must match exactly and appear "
+        "exactly once (be unique) in the file, or the edit fails. You MUST read the file with "
+        "ReadFile first, or this tool will fail."
     )
     params_model = Params
     category = "write"

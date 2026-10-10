@@ -14,7 +14,10 @@ class Params(BaseModel):
 
 class Glob(Tool):
     name = "Glob"
-    description = "Find files matching a glob pattern, returning relative paths."
+    description = (
+        "Find files matching a glob pattern (e.g. '**/*.py'), returning relative paths sorted by "
+        "most recently modified. Skips version-control and cache directories."
+    )
     params_model = Params
     category = "read"
 

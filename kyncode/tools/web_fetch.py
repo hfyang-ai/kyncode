@@ -37,9 +37,9 @@ class Params(BaseModel):
 class WebFetch(Tool):
     name = "WebFetch"
     description = (
-        "Fetch a URL over http(s) and return its content as plain text "
-        "(HTML is converted to text). Use this to read a web page "
-        "when you know its URL."
+        "Fetch an http(s) URL and return its content as plain text (HTML is converted to text). "
+        "Only textual content is supported. Set max_chars to cap the returned text (default 8000). "
+        "Use this to read a web page when you already know its URL."
     )
     params_model = Params
     category = "read"

@@ -94,8 +94,8 @@ def _unwrap_ddg_url(href: str) -> str:
 class WebSearch(Tool):
     name = "WebSearch"
     description = (
-        "Search the web for a query and return the top results as "
-        "title, URL and snippet. Use WebFetch to read a result's full page."
+        "Search the web for a query and return the top results as title, URL and snippet. Set "
+        "max_results (1-10) to control how many are returned. Use WebFetch to read a result's full page."
     )
     params_model = Params
     category = "read"

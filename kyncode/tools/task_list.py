@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kyncode.tools.base import Tool, ToolResult
 
@@ -11,15 +11,19 @@ if TYPE_CHECKING:
 
 
 class TaskListParams(BaseModel):
-    status: str | None = None
-    assignee: str | None = None
+    status: str | None = Field(
+        default=None,
+        description="Filter by status: pending, in_progress, completed, or blocked",
+    )
+    assignee: str | None = Field(default=None, description="Filter by assignee name")
 
 
 class TaskListTool(Tool):
     name = "TaskList"
     description = (
-        "List all shared tasks in the team's task board. "
-        "Optionally filter by status (pending/in_progress/completed/blocked) or assignee."
+        "List tasks in the shared team task board, showing ID, title, status, assignee, and "
+        "blocking dependencies. Optionally filter by status (pending/in_progress/completed/blocked) "
+        "or assignee."
     )
     params_model = TaskListParams
     category = "read"

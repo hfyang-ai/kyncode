@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kyncode.tools.base import Tool, ToolResult
 
@@ -11,13 +11,14 @@ if TYPE_CHECKING:
 
 
 class TaskGetParams(BaseModel):
-    task_id: str
+    task_id: str = Field(description="ID of the task to fetch")
 
 
 class TaskGetTool(Tool):
     name = "TaskGet"
     description = (
-        "Get details of a shared task by ID, including dependency information."
+        "Get a task's full details by ID: status, assignee, creator, description, and its "
+        "dependency relationships (blocks/blocked_by)."
     )
     params_model = TaskGetParams
     category = "read"

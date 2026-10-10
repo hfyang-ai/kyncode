@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kyncode.tools.base import Tool, ToolResult
 
@@ -11,12 +11,21 @@ if TYPE_CHECKING:
 
 
 class TaskUpdateParams(BaseModel):
-    task_id: str
-    status: str | None = None
-    assignee: str | None = None
-    description: str | None = None
-    add_blocks: list[str] | None = None
-    add_blocked_by: list[str] | None = None
+    task_id: str = Field(description="ID of the task to update")
+    status: str | None = Field(
+        default=None,
+        description="New status: pending, in_progress, completed, or blocked",
+    )
+    assignee: str | None = Field(default=None, description="New assignee name")
+    description: str | None = Field(default=None, description="New task description")
+    add_blocks: list[str] | None = Field(
+        default=None,
+        description="Task IDs to add to the blocked-by-this set (this task now blocks them)",
+    )
+    add_blocked_by: list[str] | None = Field(
+        default=None,
+        description="Task IDs to add to the blocks-this set (they now block this task)",
+    )
 
 
 VALID_STATUSES = {"pending", "in_progress", "completed", "blocked"}
@@ -25,8 +34,8 @@ VALID_STATUSES = {"pending", "in_progress", "completed", "blocked"}
 class TaskUpdateTool(Tool):
     name = "TaskUpdate"
     description = (
-        "Update a shared task's status, assignee, description, or dependencies. "
-        "Use add_blocks/add_blocked_by to add dependency relations."
+        "Update a task's status, assignee, description, or dependencies. status must be one of "
+        "pending/in_progress/completed/blocked. add_blocks/add_blocked_by add (not replace) dependency relations."
     )
     params_model = TaskUpdateParams
     category = "command"

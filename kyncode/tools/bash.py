@@ -110,7 +110,12 @@ class Params(BaseModel):
 
 class Bash(Tool):
     name = "Bash"
-    description = "Execute a shell command and return stdout and stderr."
+    description = (
+        "Execute a shell command and return its combined stdout and stderr. Set timeout "
+        "(max 600s) to bound long-running commands. A non-zero exit code is appended with "
+        "a hint explaining its meaning (e.g. grep exit 1 = no matches) and is not treated "
+        "as an error; only timeouts and execution failures are errors."
+    )
     params_model = Params
     category = "command"
 
