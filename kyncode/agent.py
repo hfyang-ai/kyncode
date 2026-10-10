@@ -2,15 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any
-
-from pydantic import ValidationError
 
 from kyncode.client import LLMClient
 from kyncode.context import (
@@ -25,12 +21,16 @@ from kyncode.context import (
 )
 from kyncode.conversation import ConversationManager, ToolResultBlock, ToolUseBlock
 from kyncode.conversation import ThinkingBlock as ConvThinkingBlock
-from kyncode.conversation_pairing import rejected_tool_result
 from kyncode.hooks import HookContext, HookEngine
 from kyncode.memory.auto_memory import MemoryManager
 from kyncode.permissions import (
     PermissionChecker,
     PermissionMode,
+)
+from kyncode.permissions.approval import (
+    PermissionReply,  # noqa: F401 — 向后兼容 re-export，供 app/remote/tests 从 kyncode.agent 导入
+    PermissionRequest,
+    PermissionResponse,  # noqa: F401 — 向后兼容 re-export
 )
 from kyncode.prompts import (
     build_environment_context,
@@ -50,6 +50,7 @@ from kyncode.tools.base import (
     ToolCallStart,
     ToolResult,
 )
+from kyncode.tools.runtime import ToolInvocation, ToolRuntime
 
 log = logging.getLogger(__name__)
 
@@ -133,30 +134,6 @@ class HookEvent:
     event: str
     output: str
     success: bool
-
-
-class PermissionResponse(Enum):
-    ALLOW = "allow"
-    DENY = "deny"
-    ALLOW_ALWAYS = "allow_always"
-
-
-@dataclass
-class PermissionReply:
-    """用户对一次授权请求的答复。
-
-    feedback 是拒绝时顺带输入的话，会拼进拒绝结果交给模型，让模型按用户的要求换个做法。
-    """
-
-    response: PermissionResponse
-    feedback: str = ""
-
-
-@dataclass
-class PermissionRequest:
-    tool_name: str
-    description: str
-    future: asyncio.Future[PermissionReply]
 
 
 AgentEvent = (
@@ -375,6 +352,11 @@ class Agent:
         self.permission_checker = permission_checker
         self.permission_mode: PermissionMode = (
             permission_checker.mode if permission_checker else PermissionMode.DEFAULT
+        )
+        # 工具执行管线（prepare → execute → finalize）。三个执行路径都委托给它，
+        # 交互式审批路径额外传入 interactive=True。
+        self.tool_runtime = ToolRuntime(
+            registry, permission_checker=permission_checker
         )
         self.context_window = context_window
         self.compact_breaker = CompactCircuitBreaker()
@@ -969,151 +951,44 @@ class Agent:
         except Exception as e:
             log.debug("Mailbox consumption failed: %s", e)
 
-    def _build_permission_description(self, tc: ToolCallComplete) -> str:
-        """为 HITL 权限确认生成人类可读的操作描述。"""
-        return PermissionChecker.describe_tool_action(tc.tool_name, tc.arguments)
-
     async def _execute_single_tool_direct(
         self, tc: ToolCallComplete
     ) -> _ToolExecResult:
-        tool = self.registry.get(tc.tool_name)
-        start = time.monotonic()
-
-        if tool is None:
-            # 工具名不存在只回一条错误结果，让模型自己换个工具重来，不打断循环。
-            return _ToolExecResult(
-                tool_id=tc.tool_id,
-                tool_name=tc.tool_name,
-                result=ToolResult(
-                    output=f"Error: unknown tool '{tc.tool_name}'", is_error=True
-                ),
-                elapsed=time.monotonic() - start,
-            )
-
-        if not self.registry.is_enabled(tc.tool_name):
-            return _ToolExecResult(
-                tool_id=tc.tool_id,
-                tool_name=tc.tool_name,
-                result=ToolResult(
-                    output=f"Error: tool '{tc.tool_name}' is disabled", is_error=True
-                ),
-                elapsed=time.monotonic() - start,
-            )
-
-        if self.permission_checker:
-            decision = self.permission_checker.check(tool, tc.arguments)
-            if decision.effect == "deny":
-                return _ToolExecResult(
-                    tool_id=tc.tool_id,
-                    tool_name=tc.tool_name,
-                    result=ToolResult(
-                        output=f"Permission denied: {decision.reason}", is_error=True
-                    ),
-                    elapsed=time.monotonic() - start,
-                )
-
-        try:
-            params = tool.params_model.model_validate(tc.arguments)
-            result = await tool.execute(params)
-        except ValidationError as e:
-            result = ToolResult(
-                output=f"Parameter validation error: {e}", is_error=True
-            )
-        except Exception as e:
-            result = ToolResult(output=f"Tool execution error: {e}", is_error=True)
-
-        self._record_recent_tool(tc.tool_name)
-        self._snapshot_for_recovery(tc, result)
-
+        invocation: ToolInvocation | None = None
+        async for item in self.tool_runtime.invoke(tc, interactive=False):
+            invocation = item
+        assert invocation is not None
+        if invocation.executed:
+            self._record_recent_tool(tc.tool_name)
+            self._snapshot_for_recovery(tc, invocation.result)
         return _ToolExecResult(
             tool_id=tc.tool_id,
             tool_name=tc.tool_name,
-            result=result,
-            elapsed=time.monotonic() - start,
+            result=invocation.result,
+            elapsed=invocation.elapsed,
         )
 
     async def _execute_tool(
         self, tc: ToolCallComplete
-    ) -> AsyncIterator[tuple[ToolResult, float]]:
-        tool = self.registry.get(tc.tool_name)
-        start = time.monotonic()
+    ) -> AsyncIterator[PermissionRequest | tuple[ToolResult, float]]:
+        invocation: ToolInvocation | None = None
+        async for item in self.tool_runtime.invoke(tc, interactive=True):
+            if isinstance(item, PermissionRequest):
+                yield item
+            else:
+                invocation = item
 
-        if tool is None:
-            # 工具名不存在只回一条错误结果，让模型自己换个工具重来，不打断循环。
-            result = ToolResult(
-                output=f"Error: unknown tool '{tc.tool_name}'", is_error=True
-            )
-            elapsed = time.monotonic() - start
-            yield result, elapsed
-            return
-
-        if not self.registry.is_enabled(tc.tool_name):
-            result = ToolResult(
-                output=f"Error: tool '{tc.tool_name}' is disabled in current mode",
-                is_error=True,
-            )
-            elapsed = time.monotonic() - start
-            yield result, elapsed
-            return
-
-        # 权限检查
-        if self.permission_checker:
-            decision = self.permission_checker.check(tool, tc.arguments)
-
-            if decision.effect == "deny":
-                result = ToolResult(
-                    output=f"Permission denied: {decision.reason}",
-                    is_error=True,
-                )
-                elapsed = time.monotonic() - start
-                yield result, elapsed
-                return
-
-            if decision.effect == "ask":
-                loop = asyncio.get_running_loop()
-                future: asyncio.Future[PermissionReply] = loop.create_future()
-                desc = self._build_permission_description(tc)
-                # 向调用方 yield 权限请求事件，由调用方处理
-                yield PermissionRequest(
-                    tool_name=tc.tool_name,
-                    description=desc,
-                    future=future,
-                )
-                reply = await future
-
-                if reply.response == PermissionResponse.DENY:
-                    result = ToolResult(
-                        output=rejected_tool_result(reply.feedback),
-                        is_error=True,
-                    )
-                    elapsed = time.monotonic() - start
-                    yield result, elapsed
-                    return
-
-                if reply.response == PermissionResponse.ALLOW_ALWAYS:
-                    from kyncode.permissions.rules import Rule, extract_content
-
-                    content = extract_content(tc.tool_name, tc.arguments)
-                    pattern = f"{content[:60]}*" if len(content) > 60 else f"{content}*"
-                    # 写入本地规则文件，规则引擎每次评估都现读现匹配，本轮之后即刻生效
-                    rule = Rule(tool_name=tc.tool_name, pattern=pattern, effect="allow")
-                    self.permission_checker.rule_engine.append_local_rule(rule)
-
-        try:
-            params = tool.params_model.model_validate(tc.arguments)
-            result = await tool.execute(params)
-        except ValidationError as e:
-            result = ToolResult(
-                output=f"Parameter validation error: {e}", is_error=True
-            )
-        except Exception as e:
-            result = ToolResult(output=f"Tool execution error: {e}", is_error=True)
-
-        self._record_recent_tool(tc.tool_name)
-        self._snapshot_for_recovery(tc, result)
-
-        elapsed = time.monotonic() - start
+        if invocation is None:
+            result = ToolResult(output="Error: no result from tool", is_error=True)
+            elapsed = 0.0
+        else:
+            result = invocation.result
+            elapsed = invocation.elapsed
+            if invocation.executed:
+                self._record_recent_tool(tc.tool_name)
+                self._snapshot_for_recovery(tc, result)
         yield result, elapsed
+
 
     def _record_recent_tool(self, name: str) -> None:
         """记下刚执行完的工具名，供记忆召回的选择器参考。
@@ -1404,19 +1279,6 @@ class Agent:
         return last_text
 
     async def _execute_tool_noninteractive(self, tc: ToolCallComplete) -> ToolResult:
-        tool = self.registry.get(tc.tool_name)
-
-        if tool is None:
-            return ToolResult(
-                output=f"Error: unknown tool '{tc.tool_name}'", is_error=True
-            )
-
-        if not self.registry.is_enabled(tc.tool_name):
-            return ToolResult(
-                output=f"Error: tool '{tc.tool_name}' is disabled",
-                is_error=True,
-            )
-
         if self.hook_engine:
             file_path = self._infer_file_path(tc.arguments)
             hook_ctx = self._build_hook_context(
@@ -1432,31 +1294,11 @@ class Agent:
                     is_error=True,
                 )
 
-        if self.permission_checker:
-            decision = self.permission_checker.check(tool, tc.arguments)
-            if decision.effect == "deny":
-                return ToolResult(
-                    output=f"Permission denied: {decision.reason}",
-                    is_error=True,
-                )
-            if decision.effect == "ask":
-                if self.permission_mode == PermissionMode.BYPASS:
-                    pass  # BYPASS 模式自动批准
-                else:
-                    return ToolResult(
-                        output="Permission denied: non-interactive agent cannot prompt user",
-                        is_error=True,
-                    )
-
-        try:
-            params = tool.params_model.model_validate(tc.arguments)
-            result = await tool.execute(params)
-        except ValidationError as e:
-            result = ToolResult(
-                output=f"Parameter validation error: {e}", is_error=True
-            )
-        except Exception as e:
-            result = ToolResult(output=f"Tool execution error: {e}", is_error=True)
+        invocation: ToolInvocation | None = None
+        async for item in self.tool_runtime.invoke(tc, interactive=False):
+            invocation = item
+        assert invocation is not None
+        result = invocation.result
 
         if self.hook_engine:
             file_path = self._infer_file_path(tc.arguments)

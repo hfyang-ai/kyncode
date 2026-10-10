@@ -30,6 +30,12 @@ class ToolResult:
     # tool_reference 块，由服务端把 schema 展开进上下文。填了这个字段时
     # output 仍然保留一份人可读的等价文本，供 TUI 和日志展示。
     content_blocks: list[dict[str, Any]] | None = None
+    # 稳定错误码（见 kyncode.tools.errors.ToolErrorCode），由 ToolRuntime 在
+    # finalize 阶段归一填入。失败时供模型/上层按类型识别，而不是解析文案。
+    error_code: str | None = None
+    # output 是否因超过体积上限被截断。截断不是错误，单独标记以便模型知道
+    # 结果不完整、需要的话换更聚焦的调用拿全量。
+    truncated: bool = False
 
 
 class Tool(ABC):
@@ -37,6 +43,11 @@ class Tool(ABC):
     description: str
     params_model: type[BaseModel]
     category: ToolCategory = "read"
+
+    # 可选的输出模型：声明后，ToolRuntime 会在 finalize 阶段按它校验工具输出，
+    # 并只投影模型声明的字段（把 output 收成紧凑 JSON）。要求 execute 返回的
+    # output 是可解析的 JSON。不声明则跳过输出校验与投影，output 原样保留。
+    output_model: type[BaseModel] | None = None
 
     # 要不要延迟加载。延迟的工具不出现在初始 tool list 里，模型得先用 ToolSearch
     # 把 schema 捞出来才能调。只有 MCP 工具覆盖成 True：MCP 是按项目配的，一个服务器

@@ -1,3 +1,8 @@
+from kyncode.permissions.approval import (
+    PermissionReply,
+    PermissionRequest,
+    PermissionResponse,
+)
 from kyncode.permissions.checker import Decision, PermissionChecker
 from kyncode.permissions.dangerous import DangerousCommandDetector
 from kyncode.permissions.modes import DecisionEffect, PermissionMode, mode_decide
@@ -11,6 +16,9 @@ __all__ = [
     "PathSandbox",
     "PermissionChecker",
     "PermissionMode",
+    "PermissionReply",
+    "PermissionRequest",
+    "PermissionResponse",
     "Rule",
     "RuleEngine",
     "extract_content",
