@@ -53,7 +53,7 @@ from kyncode.tools.base import (
 
 log = logging.getLogger(__name__)
 
-MEMORY_EXTRACTION_INTERVAL = 1
+MEMORY_EXTRACTION_INTERVAL = 5
 # 传给记忆召回选择器的最近工具名上限，去重后保留最近这么多个
 MAX_RECENT_TOOLS = 10
 MAX_TOKENS_CEILING = 64000
@@ -215,7 +215,7 @@ class StreamCollector:
                 self.response.thinking_blocks.append(
                     ThinkingBlock(thinking=event.thinking, signature=event.signature)
                 )
-            elif isinstance(event, ToolCallStart) or isinstance(event, ToolCallDelta):
+            elif isinstance(event, (ToolCallStart, ToolCallDelta)):
                 pass
             elif isinstance(event, ToolCallComplete):
                 self.response.tool_calls.append(event)
@@ -924,18 +924,21 @@ class Agent:
             conversation.add_tool_results_message(tool_results)
 
             # 非阻塞 memory recall：工具执行完后检查 prefetch 是否就绪
-            if self.memory_recall_task and not self._memory_recall_consumed:
-                if self.memory_recall_task.done():
-                    try:
-                        recall = self.memory_recall_task.result()
-                        if recall and recall.reminder:
-                            conversation.add_system_reminder(recall.reminder)
-                            # 真正进了对话才算「已注入」。这一轮没消费掉的召回结果
-                            # 不留痕，下一轮召回时这些记忆还能参选。
-                            self.surfaced_memory_paths.update(recall.paths)
-                    except Exception:
-                        pass
-                    self._memory_recall_consumed = True
+            if (
+                self.memory_recall_task
+                and not self._memory_recall_consumed
+                and self.memory_recall_task.done()
+            ):
+                try:
+                    recall = self.memory_recall_task.result()
+                    if recall and recall.reminder:
+                        conversation.add_system_reminder(recall.reminder)
+                        # 真正进了对话才算「已注入」。这一轮没消费掉的召回结果
+                        # 不留痕，下一轮召回时这些记忆还能参选。
+                        self.surfaced_memory_paths.update(recall.paths)
+                except Exception:
+                    pass
+                self._memory_recall_consumed = True
 
             if exit_plan_called:
                 yield TurnComplete(turn=iteration)

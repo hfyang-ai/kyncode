@@ -190,7 +190,7 @@ class McpCallTool(Tool):
 
     async def execute(self, params: BaseModel) -> ToolResult:
         assert isinstance(params, McpCallParams)
-        target, resolved = self._resolve(params.server, params.tool)
+        target, _ = self._resolve(params.server, params.tool)
         if target is None:
             names = self._available_names()
             hint = ", ".join(names) if names else "(none connected)"

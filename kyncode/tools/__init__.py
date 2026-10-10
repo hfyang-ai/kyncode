@@ -69,6 +69,16 @@ class ToolRegistry:
     def search_deferred(
         self, query: str, max_results: int, protocol: str = "anthropic"
     ) -> list[dict[str, Any]]:
+        """
+        让模型通过自然语言查询来发现"延迟加载"的工具（主要是 MCP 工具）。
+        只有 should_defer=True 且未被 disable() 禁用的工具参与匹配。
+        内建工具（Bash、ReadFile 等）should_defer=False，直接被跳过
+        打分机制：
+        1. 工具名包含查询词：10 分
+        2. 工具描述包含查询词：5 分
+        3. 工具名包含查询词：3 分
+        4. 工具描述包含查询词：1 分
+        """
         query_lower = query.lower()
         scored: list[tuple[int, str, Tool]] = []
         for name, tool in self._tools.items():
@@ -92,7 +102,7 @@ class ToolRegistry:
                 scored.append((score, name, tool))
         scored.sort(key=lambda x: x[0], reverse=True)
         results: list[dict[str, Any]] = []
-        for _, _name, tool in scored[:max_results]:
+        for _, _, tool in scored[:max_results]:
             base = tool.get_schema()
             if protocol in ("openai", "openai-compat"):
                 results.append(
@@ -140,7 +150,7 @@ class ToolRegistry:
         # 官方端点走原生延迟：工具留在 tools[] 里但打上 defer_loading，由服务端
         # 决定给不给模型看。这样即使发现了新工具，tools 数组的字节也不变。
         # 其他端点只能把延迟工具整个藏起来，靠 mcp_call 兜。
-        native = (
+        anthropic_native = (
             self.mcp_loading_mode is McpLoadingMode.NATIVE and protocol == "anthropic"
         )
         schemas: list[dict[str, Any]] = []
@@ -156,7 +166,7 @@ class ToolRegistry:
             deferred = (
                 getattr(tool, "should_defer", False) and name not in self._discovered
             )
-            if deferred and not native:
+            if deferred and not anthropic_native:
                 continue
             base = tool.get_schema()
             if protocol in ("openai", "openai-compat"):
