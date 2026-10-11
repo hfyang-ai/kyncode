@@ -72,9 +72,12 @@ class PermissionChecker:
         if self.mode == PermissionMode.PLAN:
             if tool.name in _PLAN_MODE_ALLOWED_TOOLS:
                 return Decision(effect="allow", reason="Plan mode: allowed tool")
-            if tool.name in ("WriteFile", "EditFile") and content:
-                if self._is_plan_file(content):
-                    return Decision(effect="allow", reason="Plan mode: plan file write")
+            if (
+                tool.name in ("WriteFile", "EditFile")
+                and content
+                and self._is_plan_file(content)
+            ):
+                return Decision(effect="allow", reason="Plan mode: plan file write")
 
         # Layer 1: 安全的只读命令（自动放行）
         if tool.category == "command" and is_safe_command(content or ""):
@@ -151,7 +154,7 @@ class PermissionChecker:
             if abs_target == abs_plan:
                 return True
         except Exception:
-            pass
+            return False
         if os.path.basename(target_path) == os.path.basename(self.plan_file_path):
             return True
         return ".kyncode/plans/" in target_path
