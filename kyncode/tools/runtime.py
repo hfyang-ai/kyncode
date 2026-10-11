@@ -20,6 +20,11 @@ from kyncode.tools import ToolRegistry
 from kyncode.tools.base import Tool, ToolCallComplete, ToolResult
 from kyncode.tools.errors import ToolErrorCode
 from kyncode.tools.redact import redact_sensitive
+from kyncode.tracing import (
+    TRACE_ARGS_LIMIT,
+    TRACE_OUTPUT_LIMIT,
+    truncate,
+)
 
 log = logging.getLogger(__name__)
 
@@ -344,13 +349,12 @@ class ToolRuntime:
         executed: bool,
         tool: Tool | None,
     ) -> None:
-        """写一条结构化 trace；失败 / 短路 / 写命令类副作用提升为审计（info）。"""
-        audit = (
-            result.is_error
-            or not executed
-            or (tool is not None and tool.category != "read")
-        )
-        level = logging.INFO if audit else logging.DEBUG
+        """写一条结构化 trace，包含调用参数与结果内容（脱敏、截断）。
+
+        统一落到 INFO：debug.log 的 root level 是 INFO，DEBUG 进不了文件。
+        用户要从日志里看到工具调用的参数和输出，就必须记到 INFO 及以上。
+        result.output 在 _finalize 里已脱敏，这里只再截断；arguments 在此脱敏。
+        """
         payload = {
             "tool_call_id": tool_call.tool_id,
             "tool_name": tool_call.tool_name,
@@ -360,9 +364,16 @@ class ToolRuntime:
             "truncated": result.truncated,
             "executed": executed,
             "elapsed_ms": round((time.monotonic() - start) * 1000, 2),
-            "output_len": len(result.output),
+            "arguments": truncate(
+                json.dumps(tool_call.arguments, ensure_ascii=False, default=str),
+                TRACE_ARGS_LIMIT,
+            ),
+            "output": truncate(result.output, TRACE_OUTPUT_LIMIT),
         }
-        log.log(level, "tool_call %s", json.dumps(payload, ensure_ascii=False))
+        log.info(
+            "tool_call %s",
+            redact_sensitive(json.dumps(payload, ensure_ascii=False, default=str)),
+        )
 
     def _exception_to_result(self, execution: _Execution) -> ToolResult:
         """把 execute 捕获的原始异常映射成稳定错误码 + 人读文案。"""

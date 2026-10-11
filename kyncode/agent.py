@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -50,7 +51,14 @@ from kyncode.tools.base import (
     ToolCallStart,
     ToolResult,
 )
+from kyncode.tools.redact import redact_sensitive
 from kyncode.tools.runtime import ToolInvocation, ToolRuntime
+from kyncode.tracing import (
+    TRACE_ARGS_LIMIT,
+    TRACE_TEXT_LIMIT,
+    TRACE_THINKING_LIMIT,
+    truncate,
+)
 
 log = logging.getLogger(__name__)
 
@@ -592,6 +600,38 @@ class Agent:
             for n in self.hook_engine.drain_notifications()
         ]
 
+    def _log_llm_response(self, response: LLMResponse, iteration: int) -> None:
+        """把一轮 LLM 响应（文本 / 思考 / 工具调用）写成结构化 trace 到 debug.log。
+
+        文本、思考与工具参数都脱敏——模型可能回显邮箱、密钥，日志不应留存
+        明文；超长内容截断，避免日志文件膨胀。整体序列化后统一脱敏一次。
+        """
+        thinking = "".join(tb.thinking for tb in response.thinking_blocks)
+        payload = {
+            "agent_id": self.agent_id,
+            "iter": iteration,
+            "text": truncate(response.text, TRACE_TEXT_LIMIT),
+            "thinking": truncate(thinking, TRACE_THINKING_LIMIT),
+            "tool_calls": [
+                {
+                    "tool_call_id": tc.tool_id,
+                    "tool_name": tc.tool_name,
+                    "arguments": truncate(
+                        json.dumps(tc.arguments, ensure_ascii=False, default=str),
+                        TRACE_ARGS_LIMIT,
+                    ),
+                }
+                for tc in response.tool_calls
+            ],
+            "stop_reason": response.stop_reason,
+            "input_tokens": response.input_tokens,
+            "output_tokens": response.output_tokens,
+        }
+        log.info(
+            "llm_response %s",
+            redact_sensitive(json.dumps(payload, ensure_ascii=False, default=str)),
+        )
+
     async def run(self, conversation: ConversationManager) -> AsyncIterator[AgentEvent]:
         self._current_conversation = conversation
         env_context = build_environment_context(
@@ -725,6 +765,7 @@ class Agent:
                 yield event
 
             response = collector.response
+            self._log_llm_response(response, iteration)
 
             if self.hook_engine:
                 ctx = self._build_hook_context("post_receive", message=response.text)
@@ -1174,6 +1215,7 @@ class Agent:
                 pass
 
             response = collector.response
+            self._log_llm_response(response, iteration)
             self.total_input_tokens += response.input_tokens
             self.total_output_tokens += response.output_tokens
 
