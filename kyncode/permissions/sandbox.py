@@ -5,11 +5,23 @@ from pathlib import Path
 
 
 class PathSandbox:
-    # 默认禁写路径：这些文件包含敏感配置，不允许 Agent 直接修改
+    # 默认禁写路径：这些文件包含敏感配置，不允许 Agent 直接修改。
+    # 前三条是 kyncode 自身的权限配置（相对 project_root）；其余是用户级
+    # 敏感凭证 / 密钥 / shell 配置（以 ~ 开头，会 expanduser 成绝对路径），
+    # 保证即便 project_root 是 home 目录，这些文件也始终被保护。
     _DEFAULT_DENY_WRITE: list[str] = [
         ".kyncode/config.yaml",
         ".kyncode/permissions.local.yaml",
         ".kyncode/skills/",
+        "~/.ssh/",
+        "~/.aws/",
+        "~/.gnupg/",
+        "~/.netrc",
+        "~/.bashrc",
+        "~/.zshrc",
+        "~/.profile",
+        "~/.bash_profile",
+        "~/.zprofile",
     ]
 
     def __init__(
@@ -24,10 +36,11 @@ class PathSandbox:
             for p in extra_allowed:
                 self._allowed_roots.append(Path(p).resolve())
 
-        # 禁写路径列表：相对路径基于 project_root 解析
+        # 禁写路径列表：先 expanduser 展开 ~，再判断相对/绝对——
+        # 相对路径基于 project_root 解析，绝对路径（含 ~ 展开后的）原样保留。
         self._deny_write: list[Path] = []
         for dp in deny_write or self._DEFAULT_DENY_WRITE:
-            dp_path = Path(dp)
+            dp_path = Path(dp).expanduser()
             if not dp_path.is_absolute():
                 dp_path = root / dp_path
             self._deny_write.append(dp_path.resolve())

@@ -42,7 +42,7 @@ class WebFetch(Tool):
         "Use this to read a web page when you already know its URL."
     )
     params_model = Params
-    category = "read"
+    category = "network"
 
     async def execute(self, params: Params) -> ToolResult:
         try:

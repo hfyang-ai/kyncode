@@ -50,6 +50,25 @@ _DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     # ── 防火墙 ──
     (re.compile(r"iptables\s+-F\b"), "清除所有 iptables 防火墙规则"),
+    # ── 删除家目录的变量 / 长选项变体 ──
+    (
+        re.compile(r"rm\s+-[a-z]*r[a-z]*f[a-z]*\s+\$HOME(?:\s|$)"),
+        "递归强制删除家目录($HOME)",
+    ),
+    (
+        re.compile(r"rm\s+-[a-z]*r[a-z]*f[a-z]*\s+\$\{HOME\}(?:\s|$)"),
+        "递归强制删除家目录(${HOME})",
+    ),
+    (re.compile(r"rm\s+.*--recursive[^\s]*\s+--force\b"), "长选项递归强制删除"),
+    # ── find 执行 / 批量删除 ──
+    (
+        re.compile(r"find\s+.*-(?:exec|execdir)\s+(?:rm|sh|bash)\b"),
+        "find 执行删除或脚本",
+    ),
+    (re.compile(r"find\s+.*-delete\b"), "find 批量删除文件"),
+    # ── 编码 / 任意命令管道执行 ──
+    (re.compile(r"base64\s+.*-d[^\s]*\s*\|\s*(?:ba|z)?sh\b"), "base64 解码后管道执行"),
+    (re.compile(r"\|\s*(?:ba|z)?sh\b"), "管道执行 shell 脚本"),
 ]
 
 
@@ -94,8 +113,6 @@ _SAFE_COMMANDS = frozenset(
         "fgrep",
         "diff",
         "comm",
-        "tee",
-        "xargs",
         "true",
         "false",
         "test",
@@ -114,7 +131,6 @@ _SAFE_COMMANDS = frozenset(
         "go env",
         "node -v",
         "npm -v",
-        "npx",
         "python --version",
         "pip list",
         "cargo --version",
@@ -123,6 +139,26 @@ _SAFE_COMMANDS = frozenset(
         "java --version",
     }
 )
+
+
+def _has_execution_semantics(command: str) -> bool:
+    """白名单命令自身具备执行 / 写文件能力时，检测参数里藏的执行语义。
+
+    awk 的 system() 会直接调 shell；find 的 -exec/-execdir/-delete/-ok 会执行或
+    删除文件；sed 的 -i 会就地写文件。这些即使命令名在安全列表里也应视为危险，
+    否则「只读白名单」会被当成任意代码执行的入口。
+    """
+    return (
+        (command.startswith("awk") and "system(" in command)
+        or (
+            command.startswith("find")
+            and re.search(r"-(?:exec|execdir|delete|ok)\b", command)
+        )
+        or (
+            command.startswith("sed")
+            and re.search(r"(?:^|\s)-i(?:\.\w+)?(?:\s|$)", command)
+        )
+    )
 
 
 def is_safe_command(command: str) -> bool:
@@ -134,7 +170,7 @@ def is_safe_command(command: str) -> bool:
             return False
     for safe in _SAFE_COMMANDS:
         if trimmed == safe or trimmed.startswith(safe + " "):
-            return True
+            return not _has_execution_semantics(trimmed)
     return False
 
 

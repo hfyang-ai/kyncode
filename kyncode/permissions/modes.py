@@ -16,10 +16,30 @@ class PermissionMode(str, Enum):
 
 
 _MODE_MATRIX: dict[PermissionMode, dict[ToolCategory, DecisionEffect]] = {
-    PermissionMode.DEFAULT: {"read": "allow", "write": "ask", "command": "ask"},
-    PermissionMode.ACCEPT_EDITS: {"read": "allow", "write": "allow", "command": "ask"},
-    PermissionMode.PLAN: {"read": "allow", "write": "ask", "command": "ask"},
-    PermissionMode.BYPASS: {"read": "allow", "write": "allow", "command": "allow"},
+    PermissionMode.DEFAULT: {
+        "read": "allow",
+        "write": "ask",
+        "command": "ask",
+        "network": "ask",
+    },
+    PermissionMode.ACCEPT_EDITS: {
+        "read": "allow",
+        "write": "allow",
+        "command": "ask",
+        "network": "ask",
+    },
+    PermissionMode.PLAN: {
+        "read": "allow",
+        "write": "ask",
+        "command": "ask",
+        "network": "ask",
+    },
+    PermissionMode.BYPASS: {
+        "read": "allow",
+        "write": "allow",
+        "command": "allow",
+        "network": "allow",
+    },
 }
 
 

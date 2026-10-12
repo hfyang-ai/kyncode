@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -9,6 +11,10 @@ from kyncode.permissions.modes import DecisionEffect, PermissionMode, mode_decid
 from kyncode.permissions.rules import Rule, RuleEngine, evaluate_rules, extract_content
 from kyncode.permissions.sandbox import PathSandbox
 from kyncode.tools.base import Tool
+from kyncode.tools.redact import redact_sensitive
+from kyncode.tracing import TRACE_ARGS_LIMIT, truncate
+
+log = logging.getLogger(__name__)
 
 _PLAN_MODE_ALLOWED_TOOLS = frozenset(
     {"Agent", "ToolSearch", "AskUserQuestion", "ExitPlanMode"}
@@ -56,6 +62,32 @@ class PermissionChecker:
         return ", ".join(parts) if parts else tool_name
 
     def check(self, tool: Tool, arguments: dict[str, Any]) -> Decision:
+        decision = self._decide(tool, arguments)
+        # 审计日志：每次裁决（allow/deny/ask）都结构化落盘，参数脱敏 + 截断，
+        # 让安全审计能追溯「谁在什么模式下对什么工具做出了什么决定、为什么」。
+        log.info(
+            "permission_check %s",
+            redact_sensitive(
+                json.dumps(
+                    {
+                        "tool": tool.name,
+                        "category": tool.category,
+                        "mode": self.mode.value,
+                        "effect": decision.effect,
+                        "reason": decision.reason,
+                        "arguments": truncate(
+                            json.dumps(arguments, ensure_ascii=False, default=str),
+                            TRACE_ARGS_LIMIT,
+                        ),
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                )
+            ),
+        )
+        return decision
+
+    def _decide(self, tool: Tool, arguments: dict[str, Any]) -> Decision:
         content = extract_content(tool.name, arguments)
 
         # 规则快照按需取一次：安全命令、危险命令这些在前面几层就返回，压根不必碰规则文件；

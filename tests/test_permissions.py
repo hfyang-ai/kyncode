@@ -86,8 +86,11 @@ class TestDangerousCommandDetector:
         assert hit
 
     def test_safe_git_push(self) -> None:
-        hit, _ = self.detector.detect("git push --force origin main")
+        # --force-with-lease 是安全的强推方式，应放行；裸 --force 应被拦
+        hit, _ = self.detector.detect("git push --force-with-lease origin main")
         assert not hit
+        hit, _ = self.detector.detect("git push --force origin main")
+        assert hit
 
     def test_safe_rm_file(self) -> None:
         hit, _ = self.detector.detect("rm -rf build/")

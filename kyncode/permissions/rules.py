@@ -19,6 +19,8 @@ _CONTENT_FIELDS: dict[str, str] = {
     "EditFile": "file_path",
     "Glob": "pattern",
     "Grep": "pattern",
+    "WebFetch": "url",
+    "WebSearch": "query",
 }
 
 

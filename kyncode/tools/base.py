@@ -18,7 +18,7 @@ SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".tox", ".mypy_cach
 # 能看到足够多的内容，不必为了看全结果再发一轮 ReadFile。
 MAX_OUTPUT_CHARS = 50000
 
-ToolCategory = Literal["read", "write", "command"]
+ToolCategory = Literal["read", "write", "command", "network"]
 
 
 @dataclass
@@ -58,7 +58,10 @@ class Tool(ABC):
 
     @property
     def is_read_only(self) -> bool:
-        return self.category == "read"
+        # network 类（WebFetch/WebSearch）执行层无副作用（GET 只读），可安全
+        # 重试 / 并发；但它需要单独走权限确认（SSRF / 信息外发），这由
+        # category == "network" 在 mode_decide 里表达，与「是否只读」是两个维度。
+        return self.category in ("read", "network")
 
     def is_concurrency_safe(self, args: dict[str, Any]) -> bool:
         """这一次调用能不能跟别的并发跑，按实际参数判断而不是只看类别。

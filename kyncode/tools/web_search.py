@@ -98,7 +98,7 @@ class WebSearch(Tool):
         "max_results (1-10) to control how many are returned. Use WebFetch to read a result's full page."
     )
     params_model = Params
-    category = "read"
+    category = "network"
 
     async def execute(self, params: Params) -> ToolResult:
         query = params.query.strip()
