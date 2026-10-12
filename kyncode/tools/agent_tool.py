@@ -11,6 +11,7 @@ from kyncode.tools.base import Tool, ToolResult
 if TYPE_CHECKING:
     from kyncode.agent import Agent
     from kyncode.agents.loader import AgentLoader
+    from kyncode.agents.parser import AgentDef
     from kyncode.agents.task_manager import TaskManager
     from kyncode.agents.trace import TraceManager
     from kyncode.client import LLMClient
