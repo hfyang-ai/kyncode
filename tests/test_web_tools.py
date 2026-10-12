@@ -8,7 +8,6 @@ from kyncode.tools.web_search import WebSearch
 from kyncode.web.html_text import html_to_text
 from kyncode.web.url_guard import BlockedURLError, validate_url
 
-
 # ── url_guard ──
 
 
@@ -33,6 +32,28 @@ def test_validate_url_blocks_ssrf(url: str) -> None:
 
 def test_validate_url_allows_public_literal_ip() -> None:
     assert validate_url("https://1.1.1.1/") == "https://1.1.1.1/"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/?token=abc",
+        "https://example.com/?api_key=sk-123",
+        "https://example.com/path?client_secret=x",
+        "https://example.com/path?access_token=yyy",
+        "https://example.com/path#private_key=zzz",
+    ],
+)
+def test_validate_url_blocks_sensitive_params(url: str) -> None:
+    with pytest.raises(BlockedURLError):
+        validate_url(url)
+
+
+def test_validate_url_allows_ordinary_params() -> None:
+    # 普通参数（page/sort）不误伤；用公网字面量 IP 避免触发真实 DNS
+    assert validate_url("https://1.1.1.1/?page=2&sort=asc") == (
+        "https://1.1.1.1/?page=2&sort=asc"
+    )
 
 
 # ── html_to_text ──
@@ -66,7 +87,8 @@ def _patch_client(monkeypatch, handler) -> None:
     real = httpx.AsyncClient
 
     def factory(*args, **kwargs):
-        return real(transport=transport, follow_redirects=True)
+        # 尊重调用方传的 follow_redirects（web_fetch 手动跟随重定向时传 False）
+        return real(transport=transport, **kwargs)
 
     monkeypatch.setattr("kyncode.tools.web_fetch.httpx.AsyncClient", factory)
 
@@ -135,6 +157,74 @@ async def test_web_fetch_blocks_private_url() -> None:
     )
     assert result.is_error
     assert "blocked" in result.output.lower()
+
+
+async def test_web_fetch_follows_redirect(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/start":
+            return httpx.Response(302, headers={"location": "https://example.com/final"})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text="<p>final content</p>",
+        )
+
+    _patch_client(monkeypatch, handler)
+    monkeypatch.setattr("kyncode.tools.web_fetch.validate_url", lambda url: url)
+
+    result = await WebFetch().execute(
+        WebFetch.params_model(url="https://example.com/start")
+    )
+    assert not result.is_error
+    assert "final content" in result.output
+
+
+async def test_web_fetch_blocks_redirect_to_private(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302, headers={"location": "http://169.254.169.254/latest/meta-data/"}
+        )
+
+    _patch_client(monkeypatch, handler)
+
+    # 初始 URL 放行，重定向目标（内网）被校验拦截
+    def fake_validate(url: str) -> str:
+        if "169.254.169.254" in url:
+            raise BlockedURLError("blocked address: 169.254.169.254")
+        return url
+
+    monkeypatch.setattr("kyncode.tools.web_fetch.validate_url", fake_validate)
+
+    result = await WebFetch().execute(
+        WebFetch.params_model(url="https://example.com/start")
+    )
+    assert result.is_error
+    assert "redirect blocked" in result.output
+
+
+async def test_web_fetch_blocks_connected_private_ip(monkeypatch) -> None:
+    class _FakeStream:
+        def get_extra_info(self, name: str):
+            if name == "peername":
+                return ("127.0.0.1", 12345)
+            return None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/plain"},
+            text="should not be read",
+            extensions={"network_stream": _FakeStream()},
+        )
+
+    _patch_client(monkeypatch, handler)
+    monkeypatch.setattr("kyncode.tools.web_fetch.validate_url", lambda url: url)
+
+    result = await WebFetch().execute(
+        WebFetch.params_model(url="https://example.com/")
+    )
+    assert result.is_error
+    assert "connected to blocked address" in result.output
 
 
 # ── WebSearch ──
