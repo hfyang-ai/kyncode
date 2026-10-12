@@ -242,7 +242,11 @@ async def test_write_tool_is_not_retried():
 
     write_tool = _FakeTool(flaky)
     write_tool.category = "write"
-    runtime = ToolRuntime(_registry(write_tool), max_retries=2)
+    runtime = ToolRuntime(
+        _registry(write_tool),
+        permission_checker=_checker(PermissionMode.BYPASS),
+        max_retries=2,
+    )
     tc = ToolCallComplete("t1", "FakeTool", {})
 
     result, _ = await _collect(runtime.invoke(tc))

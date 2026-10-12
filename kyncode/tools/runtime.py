@@ -212,7 +212,14 @@ class ToolRuntime:
 
     def _check_permission(self, prepared: PreparedCall) -> Decision | None:
         if self.permission_checker is None:
-            return None
+            # fail-closed：无 checker 时只放行只读工具，写/命令类一律拒绝。
+            # 防止未来新增 Agent 实例化点忘记传 checker 时静默裸奔。
+            if prepared.tool.category == "read":
+                return None
+            return Decision(
+                effect="deny",
+                reason="no permission checker configured (fail-closed)",
+            )
         return self.permission_checker.check(
             prepared.tool, prepared.tool_call.arguments
         )

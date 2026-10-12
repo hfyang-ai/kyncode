@@ -58,6 +58,26 @@ class SkillExecutor:
             LoopComplete,
             StreamText,
         )
+        from kyncode.permissions import (
+            DangerousCommandDetector,
+            PathSandbox,
+            PermissionChecker,
+            PermissionMode,
+            RuleEngine,
+        )
+
+        # skill fork 是非交互 worker（没有 UI 弹窗），沿用 DEFAULT 会让写/命令
+        # 落到 ask 后被非交互路径拒绝，因此用 BYPASS 放行。但仍保留三道闸：
+        # 危险命令黑名单、受保护路径写入、父级 deny 规则（复用父 agent 的
+        # 规则引擎，父级配置的 allow/deny/ask 同样约束 skill）。
+        parent_checker = self.agent.permission_checker
+        rule_engine = parent_checker.rule_engine if parent_checker else RuleEngine()
+        checker = PermissionChecker(
+            detector=DangerousCommandDetector(),
+            sandbox=PathSandbox(self.agent.work_dir),
+            rule_engine=rule_engine,
+            mode=PermissionMode.BYPASS,
+        )
 
         fork_agent = AgentClass(
             client=self.client,
@@ -65,7 +85,7 @@ class SkillExecutor:
             protocol=self.protocol,
             work_dir=self.agent.work_dir,
             max_iterations=self.agent.max_iterations,
-            permission_checker=None,
+            permission_checker=checker,
             context_window=self.agent.context_window,
         )
 

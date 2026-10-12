@@ -176,8 +176,24 @@ async def test_multi_step_autonomous():
             ],
         ]
     )
+    from kyncode.permissions import (
+        DangerousCommandDetector,
+        PathSandbox,
+        PermissionChecker,
+        PermissionMode,
+        RuleEngine,
+    )
+
     registry = create_default_registry()
-    agent = Agent(client, registry, "anthropic", work_dir="/tmp")
+    checker = PermissionChecker(
+        detector=DangerousCommandDetector(),
+        sandbox=PathSandbox("/tmp"),
+        rule_engine=RuleEngine(),
+        mode=PermissionMode.BYPASS,
+    )
+    agent = Agent(
+        client, registry, "anthropic", work_dir="/tmp", permission_checker=checker
+    )
     conv = ConversationManager()
     conv.add_user_message("Create hello.txt with Hello World, then verify")
 
