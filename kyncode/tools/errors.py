@@ -18,3 +18,4 @@ class ToolErrorCode(str, Enum):
     TIMEOUT = "timeout"
     EXECUTION_ERROR = "execution_error"
     INVALID_OUTPUT = "invalid_output"
+    REPEATED_CALL = "repeated_call"

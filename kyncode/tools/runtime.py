@@ -26,6 +26,7 @@ from kyncode.tools.ledger import (
     SUCCEEDED,
     LedgerEntry,
     ToolLedger,
+    fingerprint,
 )
 from kyncode.tools.redact import redact_sensitive
 from kyncode.tracing import (
@@ -105,6 +106,7 @@ class ToolRuntime:
         max_retries: int = 0,
         max_output_chars: int | None = None,
         ledger: ToolLedger | None = None,
+        repeat_threshold: int = 3,
     ) -> None:
         self.registry = registry
         self.permission_checker = permission_checker
@@ -115,6 +117,13 @@ class ToolRuntime:
         # 传入后，非幂等工具执行前落 executing、终态落 outcome，invoke 顶部
         # 先查账本重放已提交的结果，避免恢复会话后重复副作用。
         self.ledger = ledger
+        # 防死循环：同一工具 + 等价参数连续调用达到 repeat_threshold 次即拦截。
+        # 默认 3 —— 前 2 次真实执行，第 3 次连续重复直接返回错误、不真正执行。
+        self.repeat_threshold = repeat_threshold
+        # 「连续重复」追踪：记上一个调用的（工具名, 内容指纹）与连续计数。
+        # 换工具或换参数都会重置计数，不误伤合法的「改参重试」。
+        self._repeat_key: tuple[str, str] | None = None
+        self._repeat_count = 0
 
     async def invoke(
         self, tool_call: ToolCallComplete, *, interactive: bool = False
@@ -199,6 +208,21 @@ class ToolRuntime:
                 # BYPASS 自动放行，落到下面执行
 
         # ── execute：执行 + 超时 / 异常 / 重试 ──
+        # repeat guard：同一工具 + 等价参数连续重复调用达阈值即拦截。放在这里
+        # （prepare 校验、权限审批都通过之后、真正执行之前），只防「会真正执行」
+        # 的重复——unknown tool / 参数错误 / 权限拒绝这类短路不产生副作用，不计数。
+        repeated = self._check_repeat(tc)
+        if repeated is not None:
+            yield self._finalize(
+                repeated,
+                tc,
+                tool=prepared.tool,
+                start=start,
+                executed=False,
+                record=False,
+            )
+            return
+
         # 执行前先把「即将执行」落到账本：若执行中途进程崩了，恢复时能凭这条
         # executing（无终态）认出「结局未知」，而不是误判成「从没跑过」。
         self._record_executing(prepared)
@@ -312,6 +336,41 @@ class ToolRuntime:
     def _should_retry(self, prepared: PreparedCall, attempt: int) -> bool:
         # 只对只读工具重试：写/命令类工具重试可能重复产生副作用。
         return attempt < self.max_retries and prepared.tool.is_read_only
+
+    # ---- repeat guard：防止同一工具同一参数连续重复调用 ----
+
+    def _check_repeat(self, tc: ToolCallComplete) -> ToolResult | None:
+        """防死循环的闸：同一工具 + 等价参数连续调用达阈值即拦截。
+
+        由 invoke 在 prepare 校验、权限审批都通过之后、真正执行之前调用，因此只
+        对「即将真正执行」的调用计数——unknown tool / 参数错误 / 权限拒绝这类短路
+        不产生副作用，不进入本计数。
+
+        维护「上一个调用的键 + 连续计数」：当前键与上一个相同则计数 +1，否则
+        重置为 1。计数达到 repeat_threshold（默认 3，即前 2 次放行、第 3 次拦截）
+        时返回一条 is_error 结果，不真正执行，逼模型停下重试、换思路。
+
+        换工具或换参数都会重置计数（fingerprint 对参数顺序不敏感，只对内容敏感），
+        因此合法的「改参重试」不会误伤。
+        """
+        key = (tc.tool_name, fingerprint(tc.tool_name, tc.arguments))
+        if key == self._repeat_key:
+            self._repeat_count += 1
+        else:
+            self._repeat_key = key
+            self._repeat_count = 1
+        if self._repeat_count >= self.repeat_threshold:
+            return ToolResult(
+                output=(
+                    f"Repeated call blocked: tool '{tc.tool_name}' with identical "
+                    f"arguments was called {self._repeat_count} times in a row. "
+                    "This invocation was NOT executed. Stop repeating the same "
+                    "call and reconsider your approach."
+                ),
+                is_error=True,
+                error_code=ToolErrorCode.REPEATED_CALL,
+            )
+        return None
 
     # ---- ledger：执行轨迹记录与重放 ----
 

@@ -387,3 +387,96 @@ async def test_finalize_emits_trace_with_tool_call_id(caplog):
     # 结构化 payload 里应带上原始 tool_call_id。
     assert any("call-42" in r.message for r in caplog.records)
 
+
+# ---- repeat guard：防止同一工具同一参数连续重复调用 ----
+
+
+@pytest.mark.asyncio
+async def test_repeat_blocks_third_consecutive_call():
+    calls: list[int] = []
+
+    async def record(_params):
+        calls.append(1)
+        return ToolResult(output="ran")
+
+    runtime = ToolRuntime(_registry(_FakeTool(record)))
+    tc = ToolCallComplete("t1", "FakeTool", {"value": 1})
+
+    r1, _ = await _collect(runtime.invoke(tc))
+    r2, _ = await _collect(runtime.invoke(tc))
+    r3, _ = await _collect(runtime.invoke(tc))
+
+    # 前 2 次真实执行，第 3 次连续重复被拦截。
+    assert not r1.result.is_error
+    assert not r2.result.is_error
+    assert r3.result.is_error
+    assert r3.result.error_code == ToolErrorCode.REPEATED_CALL
+    assert r3.executed is False
+    assert "FakeTool" in r3.result.output
+    assert len(calls) == 2  # 第 3 次没有真正执行
+
+
+@pytest.mark.asyncio
+async def test_repeat_resets_on_different_arguments():
+    calls: list[int] = []
+
+    async def record(_params):
+        calls.append(1)
+        return ToolResult(output="ran")
+
+    runtime = ToolRuntime(_registry(_FakeTool(record)))
+    tc_same = ToolCallComplete("t1", "FakeTool", {"value": 1})
+
+    await _collect(runtime.invoke(tc_same))
+    await _collect(runtime.invoke(tc_same))
+    # 换参数 → 指纹变化 → 连续计数重置，不应被拦截。
+    tc_diff = ToolCallComplete("t2", "FakeTool", {"value": 2})
+    r3, _ = await _collect(runtime.invoke(tc_diff))
+
+    assert not r3.result.is_error
+    assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_repeat_resets_on_different_tool():
+    calls: list[int] = []
+
+    async def record(_params):
+        calls.append(1)
+        return ToolResult(output="ran")
+
+    fake = _FakeTool(record)
+    other = _StructuredTool('{"name": "x", "count": 1}')
+    runtime = ToolRuntime(_registry(fake, other))
+
+    tc = ToolCallComplete("t1", "FakeTool", {})
+    await _collect(runtime.invoke(tc))
+    await _collect(runtime.invoke(tc))
+    # 中间换一个工具 → 连续计数重置。
+    await _collect(runtime.invoke(ToolCallComplete("t2", "StructuredTool", {})))
+    # 回到 FakeTool，应从 1 重新计数，不拦截。
+    r, _ = await _collect(runtime.invoke(tc))
+
+    assert not r.result.is_error
+    assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_repeat_threshold_configurable():
+    calls: list[int] = []
+
+    async def record(_params):
+        calls.append(1)
+        return ToolResult(output="ran")
+
+    runtime = ToolRuntime(_registry(_FakeTool(record)), repeat_threshold=2)
+    tc = ToolCallComplete("t1", "FakeTool", {"value": 1})
+
+    r1, _ = await _collect(runtime.invoke(tc))
+    r2, _ = await _collect(runtime.invoke(tc))
+
+    assert not r1.result.is_error
+    assert r2.result.is_error
+    assert r2.result.error_code == ToolErrorCode.REPEATED_CALL
+    assert len(calls) == 1
+
