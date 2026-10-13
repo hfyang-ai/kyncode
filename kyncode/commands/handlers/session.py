@@ -4,6 +4,33 @@ from kyncode.commands.registry import Command, CommandContext, CommandType
 from kyncode.conversation import ConversationManager
 
 
+def _resolve_interrupted_tool_uses(ctx, session_id: str, messages):
+    """恢复会话时，用执行轨迹账本补全中断留下的悬空 tool_use。
+
+    优先复用 agent 工具执行管线里已挂载的 ledger（resume 时已经 load 过），
+    把有终态记录的悬空 tool_use 用真实结果回填。没有 ledger 或没有 agent
+    时原样返回，不改变既有 resume 行为。
+    """
+    if ctx.agent is None:
+        return messages
+    ledger = getattr(ctx.agent.tool_runtime, "ledger", None)
+    if ledger is None:
+        return messages
+
+    from kyncode.conversation_pairing import resolve_dangling_tool_uses
+
+    def resolve(tool_use_id: str):
+        entry = ledger.committed_by_id.get(tool_use_id)
+        if entry is None or entry.result is None:
+            return None
+        return (
+            str(entry.result.get("output", "")),
+            bool(entry.result.get("is_error", False)),
+        )
+
+    return resolve_dangling_tool_uses(messages, resolve)
+
+
 async def handle_session(ctx: CommandContext) -> None:
     sm = ctx.session_manager
     if sm is None:
@@ -57,13 +84,14 @@ async def handle_session(ctx: CommandContext) -> None:
                     f"  {i}. [{m.id[:8]}]  {title}  ({m.message_count} msgs, {ts})"
                 )
             ctx.ui.add_system_message("\n".join(lines))
-            ctx.config["_resume_candidates"] = [m.id for m in metas[:15]]
             return
-        candidates = ctx.config.get("_resume_candidates", [])
-        if session_id.isdigit() and candidates:
+        # 序号解析：实时查会话列表（与上面无参展示用同一份前 15 条），不依赖跨
+        # 命令的临时状态——config 每次命令分发都会重建，存进去下一条命令读不到。
+        if session_id.isdigit():
+            metas = sm.list()[:15]
             idx = int(session_id) - 1
-            if 0 <= idx < len(candidates):
-                session_id = candidates[idx]
+            if 0 <= idx < len(metas):
+                session_id = metas[idx].id
         result = sm.resume(session_id)
         if result is None:
             ctx.ui.add_system_message(f"会话未找到: {session_id}")
@@ -71,13 +99,17 @@ async def handle_session(ctx: CommandContext) -> None:
         if ctx.session:
             ctx.session.close()
         ctx.config["set_session"](result.session)
+        messages = result.messages
+        # 恢复后先用执行轨迹账本补全中断留下的悬空 tool_use：能查到终态记录的
+        # 直接用真实结果回填，模型看到结果就不会把已经生效的动作重做一遍。
+        messages = _resolve_interrupted_tool_uses(ctx, session_id, result.messages)
         conv = ConversationManager()
-        for msg in result.messages:
+        for msg in messages:
             conv.history.append(msg)
         ctx.config["set_conversation"](conv)
         if ctx.agent:
             ctx.agent._loop_count = 0
-        await ctx.config["render_restored"](result.messages)
+        await ctx.config["render_restored"](messages)
         ctx.ui.add_system_message(
             f"会话已恢复: {session_id} ({result.session.meta.message_count} msgs)"
         )

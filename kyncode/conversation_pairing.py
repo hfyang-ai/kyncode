@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Callable
 
 from kyncode.conversation import Message, ToolResultBlock
 
@@ -76,4 +77,51 @@ def ensure_tool_pairing(messages: list[Message]) -> list[Message]:
             resolved.add(tu.tool_use_id)
         if missing:
             out.append(Message(role="user", content="", tool_results=missing))
+    return out
+
+
+# 接在重放结果前面，说明这段是「恢复会话时从执行轨迹账本补回来的真实结果」，
+# 让模型知道工具当时确实已有结局、不必再重做。
+REPLAYED_TOOL_RESULT_PREFIX = (
+    "[Replayed from execution ledger] This tool call was already resolved before an "
+    "earlier interruption. Its recorded result is reproduced below verbatim:\n"
+)
+
+
+def resolve_dangling_tool_uses(
+    messages: list[Message],
+    resolve: Callable[[str], tuple[str, bool] | None],
+) -> list[Message]:
+    """用执行轨迹账本补全中断留下的悬空 tool_use，返回副本、不改输入。
+
+    `resolve` 接收 tool_use_id，返回 (content, is_error)；返回 None 表示账本里
+    没有该调用的终态记录（可能从没执行，或执行到一半被打断、结局未知），这条
+    悬空 tool_use 原样保留，交由请求前的 ensure_tool_pairing 用「interrupted」
+    措辞兜底。
+
+    补出来的结果直接写回历史：它如实记录了「发生过什么」，resume 时模型看到真实
+    结果就不会再把已经生效的动作重做一遍。这里只补有据可查的终态，不碰结局未知的。
+    """
+    resolved = {tr.tool_use_id for m in messages for tr in (m.tool_results or [])}
+    out: list[Message] = []
+    for m in messages:
+        out.append(m)
+        pending: list[ToolResultBlock] = []
+        for tu in m.tool_uses or []:
+            if tu.tool_use_id in resolved:
+                continue
+            recorded = resolve(tu.tool_use_id)
+            if recorded is None:
+                continue
+            content, is_error = recorded
+            pending.append(
+                ToolResultBlock(
+                    tool_use_id=tu.tool_use_id,
+                    content=REPLAYED_TOOL_RESULT_PREFIX + content,
+                    is_error=is_error,
+                )
+            )
+            resolved.add(tu.tool_use_id)
+        if pending:
+            out.append(Message(role="user", content="", tool_results=pending))
     return out

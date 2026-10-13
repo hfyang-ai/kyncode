@@ -19,6 +19,14 @@ from kyncode.permissions.approval import (
 from kyncode.tools import ToolRegistry
 from kyncode.tools.base import Tool, ToolCallComplete, ToolResult
 from kyncode.tools.errors import ToolErrorCode
+from kyncode.tools.ledger import (
+    DENIED,
+    FAILED,
+    REPLAYABLE_STATUSES,
+    SUCCEEDED,
+    LedgerEntry,
+    ToolLedger,
+)
 from kyncode.tools.redact import redact_sensitive
 from kyncode.tracing import (
     TRACE_ARGS_LIMIT,
@@ -96,18 +104,38 @@ class ToolRuntime:
         timeout: float | None = None,
         max_retries: int = 0,
         max_output_chars: int | None = None,
+        ledger: ToolLedger | None = None,
     ) -> None:
         self.registry = registry
         self.permission_checker = permission_checker
         self.timeout = timeout
         self.max_retries = max_retries
         self.max_output_chars = max_output_chars
+        # 执行轨迹账本：为 None 时不记录、不重放（一次性调用、子 agent 等）。
+        # 传入后，非幂等工具执行前落 executing、终态落 outcome，invoke 顶部
+        # 先查账本重放已提交的结果，避免恢复会话后重复副作用。
+        self.ledger = ledger
 
     async def invoke(
         self, tool_call: ToolCallComplete, *, interactive: bool = False
     ) -> AsyncIterator[PermissionRequest | ToolInvocation]:
         start = time.monotonic()
         tc = tool_call
+
+        # ── replay：恢复会话后拦截「已经执行过」的非幂等调用 ──
+        # 先按 tool_call_id 查（同一 tool_use 被重放），查不到再按内容指纹查
+        # （模型换个新 id 重新发起同一动作）。命中就交回记账结果，绝不重跑。
+        replayed = self._maybe_replay(tc)
+        if replayed is not None:
+            yield self._finalize(
+                replayed,
+                tc,
+                tool=self.registry.get(tc.tool_name),
+                start=start,
+                executed=False,
+                record=False,
+            )
+            return
 
         # ── prepare：解析 / 查找 / 校验 / 权限与审批 ──
         prepared = self._prepare(tc)
@@ -171,6 +199,9 @@ class ToolRuntime:
                 # BYPASS 自动放行，落到下面执行
 
         # ── execute：执行 + 超时 / 异常 / 重试 ──
+        # 执行前先把「即将执行」落到账本：若执行中途进程崩了，恢复时能凭这条
+        # executing（无终态）认出「结局未知」，而不是误判成「从没跑过」。
+        self._record_executing(prepared)
         execution = await self._execute(prepared)
 
         # ── finalize：封装结果 ──
@@ -282,6 +313,90 @@ class ToolRuntime:
         # 只对只读工具重试：写/命令类工具重试可能重复产生副作用。
         return attempt < self.max_retries and prepared.tool.is_read_only
 
+    # ---- ledger：执行轨迹记录与重放 ----
+
+    @staticmethod
+    def _replayable(tool: Tool | None) -> bool:
+        """只有非幂等（会改东西）的工具才需要记账和重放。
+
+        只读工具重跑无副作用，重放它们反而可能回读过期的文件内容。
+        """
+        return tool is not None and not tool.is_read_only
+
+    def _maybe_replay(self, tc: ToolCallComplete) -> ToolResult | None:
+        """恢复会话后，若这次调用已经执行过，交回记账结果而不是重跑。
+
+        先按 tool_call_id 查（同一 tool_use 重放），再按内容指纹查（模型换新 id
+        重新发起同一动作）。后者命中即消费，一次恢复只重放一次。返回 None 表示
+        没有可重放的记录，走正常执行路径。
+        """
+        if self.ledger is None:
+            return None
+        tool = self.registry.get(tc.tool_name)
+        if not self._replayable(tool):
+            return None
+
+        entry = self.ledger.committed_by_id.get(tc.tool_id)
+        if entry is None:
+            entry = self.ledger.consume_replay(tc.tool_name, tc.arguments)
+        if entry is None or entry.result is None:
+            return None
+        # 只重放「真正执行过」的终态（succeeded/failed）。denied 意味着上次根本没
+        # 执行、无副作用，不该被重放——让调用走正常权限检查，用户可能这次改主意放行。
+        if entry.status not in REPLAYABLE_STATUSES:
+            return None
+        return self._result_from_entry(entry)
+
+    @staticmethod
+    def _result_from_entry(entry: LedgerEntry) -> ToolResult:
+        """把账本里的 result dict 还原成 ToolResult。"""
+        result = entry.result or {}
+        return ToolResult(
+            output=str(result.get("output", "")),
+            is_error=bool(result.get("is_error", False)),
+            error_code=result.get("error_code"),
+            truncated=bool(result.get("truncated", False)),
+        )
+
+    def _record_executing(self, prepared: PreparedCall) -> None:
+        if self.ledger is None or not self._replayable(prepared.tool):
+            return
+        self.ledger.record_executing(
+            prepared.tool_call.tool_id,
+            prepared.tool_call.tool_name,
+            prepared.tool_call.arguments,
+        )
+
+    def _record_outcome(
+        self,
+        tool_call: ToolCallComplete,
+        result: ToolResult,
+        tool: Tool | None,
+        executed: bool,
+        elapsed_ms: float,
+    ) -> None:
+        if self.ledger is None or not self._replayable(tool):
+            return
+        if not executed:
+            status = DENIED
+        elif result.is_error:
+            status = FAILED
+        else:
+            status = SUCCEEDED
+        self.ledger.record_outcome(
+            tool_call.tool_id,
+            tool_call.tool_name,
+            tool_call.arguments,
+            result={
+                "output": result.output,
+                "is_error": result.is_error,
+                "error_code": result.error_code,
+                "truncated": result.truncated,
+            },
+            status=status,
+            elapsed_ms=elapsed_ms,
+        )
+
     # ---- finalize ----
 
     def _finalize(
@@ -292,6 +407,7 @@ class ToolRuntime:
         tool: Tool | None,
         start: float,
         executed: bool,
+        record: bool = True,
     ) -> ToolInvocation:
         # 1. 错误码归一：工具自身返回 is_error 但没标 error_code 时兜底归类。
         if result.is_error and result.error_code is None:
@@ -311,7 +427,15 @@ class ToolRuntime:
         # 5. 写入 trace / 审计。
         self._emit_trace(tool_call, result, start, executed, tool)
 
-        # 6. 保留原始 tool_call_id。
+        # 6. 记账：非幂等工具把终态落进执行轨迹账本（脱敏/截断之后的最终结果）。
+        # 重放路径（record=False）不落账——重放的结果本就是账本里已有的终态，
+        # 再记一条只会把原终态覆盖成一条假的 denied。
+        if record:
+            self._record_outcome(
+                tool_call, result, tool, executed, (time.monotonic() - start) * 1000
+            )
+
+        # 7. 保留原始 tool_call_id。
         return ToolInvocation(
             result=result,
             elapsed=time.monotonic() - start,

@@ -13,6 +13,7 @@
 - **子 Agent 与团队协作**：Leader 调度、任务板、消息邮箱，可多 Agent 并行推进同一项目。
 - **长期记忆**：跨会话记忆存储与召回，配合上下文窗口自动压缩管理 token 预算。
 - **ToolRuntime 三段管线**：`prepare → execute → finalize`，统一处理参数校验、权限审批、超时/重试、结果封装、脱敏与审计。
+- **执行轨迹 checkpoint**：非幂等工具调用两段式记账（`executing` → 终态），Agent 中断后 `resume` 能重放已执行工具的结果、补全悬空 `tool_use`，避免重复副作用。
 - **多运行模式**：交互式 TUI、`-p` 非交互（支持 NDJSON 流式输出）、`--remote` 远程 WebSocket 模式。
 
 ## 技术栈
@@ -135,7 +136,7 @@ kyncode/
 ├── client.py           # LLM 客户端（Anthropic / OpenAI / OpenAI 兼容）
 ├── conversation.py     # 会话管理与上下文组装
 ├── config.py           # 配置加载、合并与校验
-├── tools/              # 内建工具 + ToolRuntime 执行管线
+├── tools/              # 内建工具 + ToolRuntime 执行管线 + 执行轨迹账本（ledger）
 ├── permissions/        # 权限检查、审批、规则与路径沙箱
 ├── hooks/              # 事件钩子引擎
 ├── mcp/                # MCP 客户端与加载策略

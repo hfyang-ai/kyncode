@@ -901,6 +901,7 @@ class KynCodeApp(App):
         )
         self.agent.file_history = self.file_history
         self.agent.session_id = self.session.session_id
+        self._attach_ledger()
 
         self._exit_plan_tool._is_plan_mode = lambda: self.agent.plan_mode
         self._exit_plan_tool._plan_exists = lambda: self.agent._get_plan_path().exists()
@@ -1181,6 +1182,25 @@ class KynCodeApp(App):
         self.session = session
         if self.agent:
             self.agent.session_id = session.session_id
+            self._attach_ledger()
+
+    def _attach_ledger(self) -> None:
+        """按当前会话 id 挂载（或切换）执行轨迹账本到工具执行管线。
+
+        ledger 文件按会话隔离、append-only。挂载时 load() 一把，把上一段会话
+        已提交的非幂等工具终态快照进重放池——resume 后模型若重新发起同一动作，
+        会被重放而不是重跑。新建会话的文件是空的，load() 得到空池，自然不重放。
+        """
+        if self.agent is None:
+            return
+        from kyncode.tools.ledger import ToolLedger
+
+        old = getattr(self.agent.tool_runtime, "ledger", None)
+        if old is not None:
+            old.close()
+        ledger = ToolLedger.for_session(self.agent.work_dir, self.agent.session_id)
+        ledger.load()
+        self.agent.tool_runtime.ledger = ledger
 
     def _flush_session(self) -> None:
         """把还没写进会话记录的消息追加落盘。
@@ -1959,8 +1979,13 @@ class KynCodeApp(App):
         from kyncode.permission_dialog import InlinePermissionWidget
 
         chat = self.query_one("#chat-area", VerticalScroll)
+        # 先清掉可能残留的旧确认框。widget.remove() 是异步的（内部 post Prune
+        # 消息，真正从 DOM 摘除要等消息循环），若不 await 到摘除完成就紧接着
+        # mount 新确认框，会撞上重复的 perm-inline ID（DuplicateIds 崩溃）。
+        await self._dismiss_permission_widget()
         widget = InlinePermissionWidget(request.tool_name, request.description)
         self._pending_perm_request = request
+        self._pending_perm_widget = widget
         await chat.mount(widget)
         self.call_after_refresh(chat.scroll_end, animate=False)
         # 权限提示弹窗期间禁用输入框
@@ -1969,23 +1994,25 @@ class KynCodeApp(App):
         except Exception:
             pass
 
-    def on_inline_permission_widget_responded(
+    async def on_inline_permission_widget_responded(
         self, event: InlinePermissionWidget.Responded
     ) -> None:
         req = getattr(self, "_pending_perm_request", None)
+        # 先移除确认框再 resolve future：保证旧的 perm-inline 已从 DOM 摘除后
+        # agent 才继续处理下一个工具，否则下一个权限请求会撞上残留的重复 ID。
+        await self._dismiss_permission_widget()
         # future 可能已经结束（本轮被取消时会被 cancel），此时不能再回填结果
         if req is not None and not req.future.done():
             req.future.set_result(event.reply)
-        self._dismiss_permission_widget()
 
-    def _dismiss_permission_widget(self) -> None:
-        """移除确认框并恢复输入框。答复后和本轮被中断时都会调用。"""
-        from kyncode.permission_dialog import InlinePermissionWidget
-
+    async def _dismiss_permission_widget(self) -> None:
+        """移除确认框并恢复输入框。答复后、本轮中断、以及 mount 新确认框前都会调用。"""
         self._pending_perm_request = None
-        # 从聊天区移除权限弹窗组件
-        for widget in self.query("#perm-inline").results(InlinePermissionWidget):
-            widget.remove()
+        # 用引用追踪 + 先置空，保证幂等：同一 widget 只会被 remove 一次。
+        widget = getattr(self, "_pending_perm_widget", None)
+        self._pending_perm_widget = None
+        if widget is not None:
+            await widget.remove()
         # 重新启用输入框
         try:
             self.query_one("#chat-input").disabled = False
@@ -2115,7 +2142,7 @@ class KynCodeApp(App):
             if self._agent_task and not self._agent_task.done():
                 self._agent_task.cancel()
             # 确认框还开着就一并移除，本轮取消后 Agent 不会再等它的答复
-            self._dismiss_permission_widget()
+            await self._dismiss_permission_widget()
             self._show_system_message("(response interrupted)")
             self._finish_streaming()
             try:
