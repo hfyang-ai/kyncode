@@ -8,6 +8,7 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Static
 
+from kyncode import ui_colors
 from kyncode.memory.session import SessionMeta
 
 
@@ -74,7 +75,10 @@ class InlineResumeWidget(Vertical, can_focus=True):
         lines = []
         total = len(self._sessions)
         showing = len(self._filtered)
-        lines.append(f"[dim]Resume session ({showing} of {total})[/]\n")
+        # 位置指示，参考 pi 的 select-list：显示当前选中第几条（游标 0-based → 1-based）
+        lines.append(
+            f"[dim]Resume session ({self._cursor + 1}/{showing} of {total})[/]\n"
+        )
 
         if self._search:
             lines.append(f"┌{'─' * 30}┐")
@@ -91,7 +95,7 @@ class InlineResumeWidget(Vertical, can_focus=True):
         for i, meta in enumerate(self._filtered[:10]):  # 最多显示 10 条
             title = meta.title or "(empty session)"
             if i == self._cursor:
-                lines.append(f"[bold cyan]❯[/] [bold]{title}[/]")
+                lines.append(f"[bold {ui_colors.ACCENT}]→[/] [bold]{title}[/]")
             else:
                 lines.append(f"  {title}")
 
@@ -125,15 +129,25 @@ class InlineResumeWidget(Vertical, can_focus=True):
         self._cursor = 0
         self._refresh()
 
+    def _visible_count(self) -> int:
+        """可见项数（列表最多展示 10 条）。"""
+        return min(len(self._filtered), 10)
+
     def action_cursor_up(self) -> None:
-        if self._cursor > 0:
-            self._cursor -= 1
-            self._refresh()
+        if not self._filtered:
+            return
+        # 环形循环：到顶回到底部（参考 pi 的 select-list 交互）
+        n = self._visible_count()
+        self._cursor = n - 1 if self._cursor <= 0 else self._cursor - 1
+        self._refresh()
 
     def action_cursor_down(self) -> None:
-        if self._cursor < min(len(self._filtered), 10) - 1:
-            self._cursor += 1
-            self._refresh()
+        if not self._filtered:
+            return
+        # 环形循环：到底回到顶部
+        n = self._visible_count()
+        self._cursor = 0 if self._cursor >= n - 1 else self._cursor + 1
+        self._refresh()
 
     def action_select(self) -> None:
         if self._filtered and 0 <= self._cursor < len(self._filtered):

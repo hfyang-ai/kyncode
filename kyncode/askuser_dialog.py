@@ -6,6 +6,8 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Static
 
+from kyncode import ui_colors
+
 
 class InlineAskUserWidget(Vertical, can_focus=True):
     """内联的 AskUser 组件，支持多问题之间的 Tab 切换导航。
@@ -68,7 +70,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
 
         q = self._questions[self._q_idx]
         header = q.get("question", q.get("message", f"Question {self._q_idx + 1}"))
-        lines.append(f" [bold color(99)]{header}[/]\n")
+        lines.append(f" [bold {ui_colors.PRIMARY}]{header}[/]\n")
 
         options = q.get("options", [])
         is_multi = q.get("multiSelect", False)
@@ -78,7 +80,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
             label = opt.get("label", str(opt)) if isinstance(opt, dict) else str(opt)
             desc = opt.get("description", "") if isinstance(opt, dict) else ""
 
-            prefix = " ❯ " if i == cursor else "   "
+            prefix = " → " if i == cursor else "   "
             bold = "[bold]" if i == cursor else ""
             end_bold = "[/]" if i == cursor else ""
 
@@ -92,7 +94,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
 
         # "Other" 选项
         other_idx = len(options)
-        prefix = " ❯ " if cursor == other_idx else "   "
+        prefix = " → " if cursor == other_idx else "   "
         bold = "[bold]" if cursor == other_idx else ""
         end_bold = "[/]" if cursor == other_idx else ""
         lines.append(f"{prefix}{bold}Other{end_bold}")
@@ -125,7 +127,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
         return f" {left} {'|'.join(parts)} {right}"
 
     def _render_submit(self) -> str:
-        lines = ["\n [bold color(99)]Review your answers:[/]\n"]
+        lines = [f"\n [bold {ui_colors.PRIMARY}]Review your answers:[/]\n"]
         for i, q in enumerate(self._questions):
             header = q.get("header", q.get("question", f"Q{i + 1}"))
             ans = self._answered.get(i, "")
@@ -136,7 +138,7 @@ class InlineAskUserWidget(Vertical, can_focus=True):
         lines.append("")
         for j, label in enumerate(["Submit answers", "Cancel"]):
             if j == self._submit_idx:
-                lines.append(f" [bold cyan]❯[/] [bold]{label}[/]")
+                lines.append(f" [bold {ui_colors.ACCENT}]→[/] [bold]{label}[/]")
             else:
                 lines.append(f"   [dim]{label}[/]")
         return "\n".join(lines)

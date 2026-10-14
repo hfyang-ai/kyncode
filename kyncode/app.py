@@ -91,6 +91,7 @@ from kyncode.tools.impl.tool_search import ToolSearchTool
 from kyncode.tools.install_skill import InstallSkillTool
 from kyncode.tools.load_skill import LoadSkill
 from kyncode.tools.mcp_call import McpCallTool
+from kyncode import ui_colors
 from kyncode.worktree.cleanup import start_stale_cleanup_task
 from kyncode.worktree.manager import WorktreeManager
 
@@ -665,12 +666,39 @@ class SubAgentBlock(Static, can_focus=True):
         self._render_done()
 
 
+class CyclicOptionList(OptionList):
+    """上下键环形循环的 OptionList，对齐 pi 的 select-list 交互。
+
+    原生 OptionList 到顶/到底就停住；这里改成到底回到顶部、到顶回到底部。
+    """
+
+    def action_cursor_up(self) -> None:
+        n = self.option_count
+        if n == 0:
+            return
+        current = self.highlighted
+        self.highlighted = n - 1 if (current is None or current <= 0) else current - 1
+
+    def action_cursor_down(self) -> None:
+        n = self.option_count
+        if n == 0:
+            return
+        current = self.highlighted
+        self.highlighted = 0 if (current is None or current >= n - 1) else current + 1
+
+
 _KYNCODE_THEME = Theme(
     name="kyncode",
-    primary="#875FFF",
-    background="#1a1a1a",
-    surface="#1a1a1a",
-    panel="#1a1a1a",
+    primary=ui_colors.PRIMARY,
+    secondary=ui_colors.SECONDARY,
+    accent=ui_colors.ACCENT,
+    warning=ui_colors.WARNING,
+    error=ui_colors.ERROR,
+    success=ui_colors.SUCCESS,
+    foreground=ui_colors.FOREGROUND,
+    background=ui_colors.BACKGROUND,
+    surface=ui_colors.SURFACE,
+    panel=ui_colors.PANEL,
     dark=True,
 )
 
@@ -765,8 +793,8 @@ class KynCodeApp(App):
         t = RichText()
         t.append("kynCode", style="bold white")
         t.append(" v0.1.0\n", style="dim")
-        t.append(f"model: {model}\n" if model else "\n", style="color(242)")
-        t.append(f"work space: {work_dir}", style="color(242)")
+        t.append(f"model: {model}\n" if model else "\n", style=ui_colors.MUTED)
+        t.append(f"work space: {work_dir}", style=ui_colors.MUTED)
         return t
 
     def compose(self) -> ComposeResult:
@@ -775,7 +803,7 @@ class KynCodeApp(App):
         if len(self.providers) > 1:
             with Vertical(id="provider-select"):
                 yield Static("Select a Provider", id="select-label")
-                yield OptionList(
+                yield CyclicOptionList(
                     *[
                         Option(f"{p.name}  [{p.model}]", id=p.name)
                         for p in self.providers
@@ -1503,8 +1531,8 @@ class KynCodeApp(App):
             from rich.text import Text as RichText
 
             user_rich = RichText()
-            user_rich.append("❯ ", style="bold color(80)")
-            user_rich.append(text, style="bold color(255)")
+            user_rich.append("❯ ", style=f"bold {ui_colors.USER_PREFIX}")
+            user_rich.append(text, style=f"bold {ui_colors.FOREGROUND}")
             user_bubble = Static(user_rich, classes="message user-message")
             await user_row.mount(user_bubble)
             self.call_after_refresh(chat.scroll_end, animate=False)
@@ -1569,7 +1597,7 @@ class KynCodeApp(App):
                     from rich.text import Text as RichText
 
                     t = RichText()
-                    t.append("● ", style="bold color(99)")
+                    t.append("● ", style=f"bold {ui_colors.AI_PREFIX}")
                     t.append(accumulated_text)
                     streaming_label.update(t)
                     self.call_after_refresh(chat.scroll_end, animate=False)
@@ -1584,7 +1612,8 @@ class KynCodeApp(App):
                         from rich.text import Text as RichText
 
                         prefix = Static(
-                            RichText("●  ", style="bold color(99)"), classes="message"
+                            RichText("●  ", style=f"bold {ui_colors.AI_PREFIX}"),
+                            classes="message",
                         )
                         await ai_row.mount(prefix)
                         md = Markdown(accumulated_text, classes="message ai-message")
@@ -2035,8 +2064,8 @@ class KynCodeApp(App):
                 row = Vertical(classes="user-row")
                 await chat.mount(row)
                 user_rich = RichText()
-                user_rich.append("❯ ", style="bold color(80)")
-                user_rich.append(msg.content, style="bold color(255)")
+                user_rich.append("❯ ", style=f"bold {ui_colors.USER_PREFIX}")
+                user_rich.append(msg.content, style=f"bold {ui_colors.FOREGROUND}")
                 bubble = Static(user_rich, classes="message user-message")
                 await row.mount(bubble)
             elif msg.role == "assistant":

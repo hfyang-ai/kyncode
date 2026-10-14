@@ -30,6 +30,13 @@ Screen { }
     margin: 1 2;
 }
 
+/* 选中项用强调色反色高亮，比默认的反色块更醒目（对齐 pi 的克制高亮） */
+#provider-list > .option-list--option-highlighted {
+    background: $accent;
+    color: $background;
+    text-style: bold;
+}
+
 /* --- Chat Area --- */
 
 #chat-area {
@@ -116,7 +123,7 @@ Screen { }
     height: auto;
     max-height: 20;
     padding: 0 1;
-    border-top: solid #303030;
+    border-top: solid $panel;
 }
 
 #chat-input {
@@ -131,7 +138,7 @@ Screen { }
     min-height: 1;
     width: 100%;
     padding: 0 1;
-    border-top: solid #303030;
+    border-top: solid $panel;
 }
 
 #mode-label {

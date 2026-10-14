@@ -8,6 +8,7 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Static
 
+from kyncode import ui_colors
 from kyncode.agent import PermissionReply, PermissionResponse
 
 _PERM_OPTIONS = [
@@ -62,7 +63,7 @@ class InlinePermissionWidget(Vertical, can_focus=True):
 
         for i, (label, _resp) in enumerate(_PERM_OPTIONS):
             if i == self._cursor:
-                line = f" [bold cyan]❯[/bold cyan] {i + 1}. [bold]{label}[/bold]"
+                line = f" [bold {ui_colors.ACCENT}]→[/] {i + 1}. [bold]{label}[/bold]"
                 # 「No」选中时后面跟一个输入框，用户输入的内容要转义，避免被当成 markup
                 if i == _DENY_IDX:
                     if self._feedback:

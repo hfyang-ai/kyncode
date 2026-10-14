@@ -8,6 +8,8 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Static
 
+from kyncode import ui_colors
+
 
 class PlanChoice(str, Enum):
     YOLO = "yolo"
@@ -54,12 +56,12 @@ class InlinePlanWidget(Vertical, can_focus=True):
 
     def _build_content(self) -> str:
         lines = [
-            "\n [bold #875fff]KynCode has written up a plan and is ready to execute. "
-            "Would you like to proceed?[/bold #875fff]\n"
+            f"\n [bold {ui_colors.PRIMARY}]KynCode has written up a plan and is ready to execute. "
+            "Would you like to proceed?[/bold]\n"
         ]
         for i, (label, _choice) in enumerate(_OPTIONS):
             if i == self._cursor:
-                lines.append(f" [bold cyan]❯[/bold cyan] {i + 1}. [bold]{label}[/bold]")
+                lines.append(f" [bold {ui_colors.ACCENT}]→[/] {i + 1}. [bold]{label}[/bold]")
             else:
                 lines.append(f"   {i + 1}. [dim]{label}[/dim]")
 
