@@ -117,6 +117,8 @@ class ErrorEvent:
 class CompactNotification:
     before_tokens: int
     message: str
+    # 压缩重建后历史的估算 token 数（与 before_tokens 一起展示「回收了多少」）。
+    after_tokens: int = 0
     # 结构化 boundary（摘要 + 原文保留尾部），UI/session 层用它持久化 compact_boundary 记录。
     # 失败路径下为 None。
     boundary: CompactBoundary | None = None
@@ -417,7 +419,12 @@ async def run_agent_loop(
         if isinstance(compact_result, CompactEvent):
             yield CompactNotification(
                 before_tokens=compact_result.before_tokens,
-                message=f"上下文已压缩（压缩前 {compact_result.before_tokens:,} tokens）",
+                after_tokens=compact_result.after_tokens,
+                message=(
+                    f"上下文已压缩（{compact_result.before_tokens:,} → "
+                    f"{compact_result.after_tokens:,} tokens，回收 "
+                    f"{compact_result.before_tokens - compact_result.after_tokens:,}）"
+                ),
                 boundary=compact_result.boundary,
             )
             conversation.inject_environment(env_context)

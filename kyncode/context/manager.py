@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import os
 import shutil
 import threading
@@ -19,6 +21,8 @@ from kyncode.conversation import (
     truncate_text_by_tokens,
 )
 from kyncode.serialization import build_messages
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # 常量
@@ -94,6 +98,9 @@ class CompactBoundary:
 @dataclass
 class CompactEvent:
     before_tokens: int
+    # 压缩重建后 history 的估算 token 数（锚点已清零，退化为对整段新历史的字符估算）。
+    # 与 before_tokens 一起构成「回收了多少」这一调优核心指标；失败/跳过路径下为 0。
+    after_tokens: int = 0
     # 摘要成功时填充，调用方可据此持久化 compact_boundary 记录。
     # 未产出摘要时为 None。
     boundary: CompactBoundary | None = None
@@ -678,12 +685,27 @@ def _prefix_too_small_to_compact(prefix: list[Message]) -> bool:
 class CompactCircuitBreaker:
     max_failures: int = 3
     consecutive_failures: int = field(default=0, init=False)
+    # 累计统计（用于成功率埋点）：attempts 是进入真实压缩流程的次数，
+    # successes 是其中成功的次数。熔断拦截与「未到阈值/前缀太小」的跳过不计入，
+    # 因为它们没有真正发起一次摘要尝试。
+    attempts: int = field(default=0, init=False)
+    successes: int = field(default=0, init=False)
 
     def record_failure(self) -> None:
         self.consecutive_failures += 1
+        self.attempts += 1
 
     def record_success(self) -> None:
         self.consecutive_failures = 0
+        self.attempts += 1
+        self.successes += 1
+
+    @property
+    def success_rate(self) -> float | None:
+        """真实压缩尝试的成功率；尚未尝试过时为 None。"""
+        if self.attempts == 0:
+            return None
+        return self.successes / self.attempts
 
     def is_open(self) -> bool:
         return self.consecutive_failures >= self.max_failures
@@ -782,6 +804,30 @@ def _summary_output_cap(
 # ---------------------------------------------------------------------------
 
 
+def _log_compact_failure(
+    started: float,
+    before_tokens: int,
+    breaker: CompactCircuitBreaker | None,
+    reason: str,
+) -> None:
+    """统一记录一次压缩失败的结构化埋点（落入 debug.log 的 WARNING 层）。"""
+    rate = breaker.success_rate if breaker is not None else None
+    log.warning(
+        "compact %s",
+        json.dumps(
+            {
+                "event": "failure",
+                "reason": reason,
+                "before_tokens": before_tokens,
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
+                "success_rate": None if rate is None else round(rate, 3),
+                "attempts": breaker.attempts if breaker is not None else 0,
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+
 async def auto_compact(
     conversation: ConversationManager,
     client: Any,
@@ -794,6 +840,9 @@ async def auto_compact(
     tool_schemas: list[Mapping[str, Any]] | None = None,
     transcript_path: str = "",
 ) -> CompactEvent | str | None:
+    # 计时整段压缩流程，供埋点统计单次压缩耗时。
+    started = time.monotonic()
+
     # 以真实 API 用量为锚点做阈值判断：current_tokens() 返回上次计费基准
     # （input + cache_read + cache_creation + output）加上锚点之后新增消息的
     # 字符估算。冷启动或刚压缩清空锚点时，退化为对整个 history 做字符估算。
@@ -821,6 +870,18 @@ async def auto_compact(
         else:
             # 处于软硬阈值之间：走正常的熔断器保护逻辑
             if breaker is not None and breaker.is_open():
+                log.info(
+                    "compact %s",
+                    json.dumps(
+                        {
+                            "event": "skipped",
+                            "reason": "breaker_open",
+                            "before_tokens": current,
+                            "consecutive_failures": breaker.consecutive_failures,
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
                 return "自动压缩已熔断（连续失败 3 次），请手动处理或使用 /compact"
 
     before_tokens = current
@@ -909,11 +970,15 @@ async def auto_compact(
                 continue
             if breaker is not None:
                 breaker.record_failure()
+            _log_compact_failure(started, before_tokens, breaker, f"exception: {e}")
             return f"摘要生成失败: {e}"
 
     if llm_output is None:
         if breaker is not None:
             breaker.record_failure()
+        _log_compact_failure(
+            started, before_tokens, breaker, "still_over_limit_after_retries"
+        )
         return "摘要生成失败：多次重试后仍超出上下文限制"
 
     summary = extract_summary(llm_output)
@@ -938,9 +1003,33 @@ async def auto_compact(
     if breaker is not None:
         breaker.record_success()
 
+    # 压缩后的历史已 replace_history 重建、锚点清零，current_tokens() 退化为对
+    # 整段新历史的字符估算，正是「压缩后」的 token 数。与 before_tokens 之差
+    # 就是本次回收的空间，是阈值调优的核心反馈。
+    after_tokens = conversation.current_tokens()
+    elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+    rate = breaker.success_rate if breaker is not None else None
+    log.info(
+        "compact %s",
+        json.dumps(
+            {
+                "event": "success",
+                "manual": manual,
+                "before_tokens": before_tokens,
+                "after_tokens": after_tokens,
+                "reclaimed_tokens": before_tokens - after_tokens,
+                "elapsed_ms": elapsed_ms,
+                "success_rate": None if rate is None else round(rate, 3),
+                "attempts": breaker.attempts if breaker is not None else 0,
+            },
+            ensure_ascii=False,
+        ),
+    )
+
     # 将结构化的 boundary（摘要 + 保留的尾部原文）交给 session 层，
     # 由它持久化为一条 compact_boundary 记录。keep tail 就是拼回重建 history 的那段。
     return CompactEvent(
         before_tokens=before_tokens,
+        after_tokens=after_tokens,
         boundary=CompactBoundary(summary=summary, keep=list(keep_tail)),
     )

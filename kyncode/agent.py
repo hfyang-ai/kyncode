@@ -549,7 +549,12 @@ class Agent:
             )
             return CompactNotification(
                 before_tokens=result.before_tokens,
-                message=f"上下文已压缩（压缩前 {result.before_tokens:,} tokens）",
+                after_tokens=result.after_tokens,
+                message=(
+                    f"上下文已压缩（{result.before_tokens:,} → "
+                    f"{result.after_tokens:,} tokens，回收 "
+                    f"{result.before_tokens - result.after_tokens:,}）"
+                ),
                 boundary=result.boundary,
             )
         return ErrorEvent(message=result or "压缩失败：对话历史为空或未达到压缩条件")

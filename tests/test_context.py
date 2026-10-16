@@ -355,6 +355,20 @@ class TestCompactCircuitBreaker:
         breaker.record_failure()
         assert not breaker.is_open()
 
+    def test_success_rate_counts_only_real_attempts(self) -> None:
+        breaker = CompactCircuitBreaker()
+        # 尚未真正尝试压缩 -> 成功率为 None，而非 0。
+        assert breaker.success_rate is None
+        breaker.record_success()
+        assert breaker.attempts == 1
+        assert breaker.successes == 1
+        assert breaker.success_rate == 1.0
+        breaker.record_failure()
+        breaker.record_failure()
+        assert breaker.attempts == 3
+        assert breaker.successes == 1
+        assert breaker.success_rate == pytest.approx(1 / 3)
+
 
 # ---------------------------------------------------------------------------
 # build_compact_messages
@@ -951,3 +965,60 @@ class TestAutoCompactKeepRecent:
         assert result.boundary.summary == "PREFIX SUMMARY"
         # 保留的尾部与原样沿用下来的内容完全一致。
         assert result.boundary.keep == kept_before
+
+    async def test_event_carries_after_tokens(self, tmp_path: Path) -> None:
+        # 成功的压缩必须带 after_tokens（压缩后估算 token 数），且 after < before，
+        # 否则压缩没有回收任何空间——这正是「回收了多少」的调优反馈。
+        conv = _make_long_conversation()
+        client = _SummaryClient()
+        conv.record_usage_anchor(input_tokens=200_000)
+
+        result = await auto_compact(
+            conv,
+            client,
+            context_window=200_000,
+            session_dir=tmp_path,
+        )
+
+        from kyncode.context.manager import CompactEvent
+
+        assert isinstance(result, CompactEvent)
+        assert result.before_tokens > 0
+        assert result.after_tokens > 0
+        assert result.after_tokens < result.before_tokens
+
+    async def test_compaction_emits_metrics_log(self, tmp_path: Path, caplog) -> None:
+        # 每次压缩成功都写一条结构化埋点（before/after/reclaimed/success_rate）。
+        import json
+        import logging
+
+        conv = _make_long_conversation()
+        client = _SummaryClient()
+        conv.record_usage_anchor(input_tokens=200_000)
+        breaker = CompactCircuitBreaker()
+
+        with caplog.at_level(logging.INFO, logger="kyncode.context.manager"):
+            result = await auto_compact(
+                conv,
+                client,
+                context_window=200_000,
+                session_dir=tmp_path,
+                breaker=breaker,
+            )
+
+        from kyncode.context.manager import CompactEvent
+
+        assert isinstance(result, CompactEvent)
+        compact_logs = [
+            r for r in caplog.records if r.getMessage().startswith("compact ")
+        ]
+        assert compact_logs
+        payload = json.loads(compact_logs[0].getMessage().split("compact ", 1)[1])
+        assert payload["event"] == "success"
+        assert payload["before_tokens"] > payload["after_tokens"] > 0
+        assert payload["reclaimed_tokens"] == (
+            payload["before_tokens"] - payload["after_tokens"]
+        )
+        assert payload["success_rate"] == 1.0
+        assert payload["attempts"] == 1
+        assert payload["elapsed_ms"] >= 0
