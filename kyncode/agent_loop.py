@@ -566,7 +566,7 @@ async def run_agent_loop(
         )
 
         for br in streaming_results:
-            content = agent._maybe_persist_or_truncate(
+            content = agent.maybe_persist_or_truncate(
                 br.tool_id, br.result.output, exempt_ids
             )
             tool_results.append(
@@ -599,7 +599,7 @@ async def run_agent_loop(
             if result is None:
                 result = ToolResult(output="Error: no result from tool", is_error=True)
 
-            content = agent._maybe_persist_or_truncate(
+            content = agent.maybe_persist_or_truncate(
                 tc.tool_id, result.output, exempt_ids
             )
             tool_results.append(
@@ -817,7 +817,7 @@ async def run_agent_loop_to_completion(
                     }
                 )
             result = await agent._execute_tool_noninteractive(tc)
-            content = agent._maybe_persist_or_truncate(
+            content = agent.maybe_persist_or_truncate(
                 tc.tool_id, result.output, exempt_ids
             )
             tool_results.append(

@@ -93,8 +93,7 @@ class ToolRuntime:
     放行，其余拒绝。
 
     timeout / max_retries 默认关闭（不超时、不重试），行为与重构前一致；重试
-    只对只读工具生效，避免对非幂等工具重复执行产生重复副作用。max_output_chars
-    默认关闭（不截断），打开时 finalize 会把超长输出截断并标记 truncated。
+    只对只读工具生效，避免对非幂等工具重复执行产生重复副作用。
     """
 
     def __init__(
@@ -104,7 +103,6 @@ class ToolRuntime:
         permission_checker: PermissionChecker | None = None,
         timeout: float | None = None,
         max_retries: int = 0,
-        max_output_chars: int | None = None,
         ledger: ToolLedger | None = None,
         repeat_threshold: int = 3,
     ) -> None:
@@ -112,7 +110,6 @@ class ToolRuntime:
         self.permission_checker = permission_checker
         self.timeout = timeout
         self.max_retries = max_retries
-        self.max_output_chars = max_output_chars
         # 执行轨迹账本：为 None 时不记录、不重放（一次性调用、子 agent 等）。
         # 传入后，非幂等工具执行前落 executing、终态落 outcome，invoke 顶部
         # 先查账本重放已提交的结果，避免恢复会话后重复副作用。
@@ -480,13 +477,10 @@ class ToolRuntime:
         if result.output:
             result.output = redact_sensitive(result.output)
 
-        # 4. 限制结果体积。
-        result = self._limit_size(result)
-
-        # 5. 写入 trace / 审计。
+        # 4. 写入 trace / 审计。
         self._emit_trace(tool_call, result, start, executed, tool)
 
-        # 6. 记账：非幂等工具把终态落进执行轨迹账本（脱敏/截断之后的最终结果）。
+        # 5. 记账：非幂等工具把终态落进执行轨迹账本（脱敏之后的最终结果）。
         # 重放路径（record=False）不落账——重放的结果本就是账本里已有的终态，
         # 再记一条只会把原终态覆盖成一条假的 denied。
         if record:
@@ -494,7 +488,7 @@ class ToolRuntime:
                 tool_call, result, tool, executed, (time.monotonic() - start) * 1000
             )
 
-        # 7. 保留原始 tool_call_id。
+        # 6. 保留原始 tool_call_id。
         return ToolInvocation(
             result=result,
             elapsed=time.monotonic() - start,
@@ -521,14 +515,6 @@ class ToolRuntime:
         result.output = json.dumps(
             data.model_dump(exclude_none=True), ensure_ascii=False
         )
-        return result
-
-    def _limit_size(self, result: ToolResult) -> ToolResult:
-        if self.max_output_chars is None or len(result.output) <= self.max_output_chars:
-            return result
-        result.output = result.output[: self.max_output_chars]
-        result.output += f"\n...[truncated to {self.max_output_chars} chars]"
-        result.truncated = True
         return result
 
     def _emit_trace(

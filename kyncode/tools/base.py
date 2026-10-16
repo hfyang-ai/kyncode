@@ -13,10 +13,12 @@ from pydantic import BaseModel
 
 SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".tox", ".mypy_cache"}
 
-# 单条工具结果进入对话历史前的溢写阈值：超过这个字符数就把完整内容写盘，
-# 历史里只留预览和文件路径。定在 50000 而不是更小的值，是为了让模型一次
-# 能看到足够多的内容，不必为了看全结果再发一轮 ReadFile。
-MAX_OUTPUT_CHARS = 50000
+# 单条工具结果进入对话历史前的溢写阈值（token）。
+# 超过这个 token 数就把完整内容写盘，历史里只留预览和文件路径。
+# 定在 15000 而不是更小的值，是为了让模型一次能看到足够多的内容，不必为了看全结果再发一轮 ReadFile。
+# 用 token 而非字符，避免同一个字符阈值在中英混排下实际 token 占用差 2~4 倍
+# （中文 1 字符 ≈ 1 token，英文约 4 字符 ≈ 1 token）。
+MAX_OUTPUT_TOKENS = 15_000
 
 ToolCategory = Literal["read", "write", "command", "network"]
 

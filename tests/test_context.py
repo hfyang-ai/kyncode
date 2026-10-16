@@ -5,11 +5,13 @@ from pathlib import Path
 import pytest
 
 from kyncode.context.manager import (
-    AGGREGATE_CHAR_LIMIT,
+    AGGREGATE_TOKEN_LIMIT,
+    CONTEXT_REMINDER_MARKER,
     KEEP_MAX_TOKENS,
     KEEP_RECENT_TOKENS,
     MIN_KEEP_MESSAGES,
     PERSISTED_TAG,
+    PREVIEW_TOKENS,
     SUMMARY_PROMPT_TOKENS,
     CompactCircuitBreaker,
     _align_keep_start_to_tool_pair,
@@ -18,13 +20,16 @@ from kyncode.context.manager import (
     apply_tool_result_budget,
     auto_compact,
     build_compact_messages,
+    build_context_reminder,
     cleanup_tool_results,
     compute_compact_threshold,
+    compute_reminder_threshold,
     compute_summary_max_tokens,
     ensure_session_dir,
     extract_summary,
     is_spill_readback,
     make_persisted_preview,
+    maybe_inject_context_reminder,
     persist_tool_result,
     resolve_keep_limits,
 )
@@ -34,7 +39,9 @@ from kyncode.conversation import (
     Message,
     ToolResultBlock,
     ToolUseBlock,
+    estimate_text_tokens,
     estimate_tokens,
+    truncate_text_by_tokens,
 )
 
 # ---------------------------------------------------------------------------
@@ -64,7 +71,7 @@ class TestMakePersistedPreview:
     def test_contains_tag_and_path(self, tmp_path: Path) -> None:
         content = "x" * 10_000
         preview = make_persisted_preview(content, tmp_path / "test.txt")
-        assert preview.startswith(PERSISTED_TAG)
+        assert f"<{PERSISTED_TAG}>" in preview
         assert "test.txt" in preview
         assert "</persisted-output>" in preview
 
@@ -72,9 +79,10 @@ class TestMakePersistedPreview:
         content = "a" * 5_000
         preview = make_persisted_preview(content, tmp_path / "test.txt")
         lines = preview.split("\n")
-        preview_line = [l for l in lines if l.startswith("aaa")]
+        preview_line = [line for line in lines if line.startswith("aaa")]
         assert len(preview_line) == 1
-        assert len(preview_line[0]) == 2_000
+        # 预览按 token 截断：纯 ASCII 约 4 字符/token，600 token ≈ 2400 字符
+        assert estimate_text_tokens(preview_line[0]) <= PREVIEW_TOKENS
 
 
 # ---------------------------------------------------------------------------
@@ -83,54 +91,58 @@ class TestMakePersistedPreview:
 
 
 class TestApplyToolResultBudget:
-    def _batch(self, *sizes: int) -> list[ToolResultBlock]:
+    # 用中文字符填充：estimate_text_tokens 对中文按 1 字符 ≈ 1 token 计，
+    # 数值与 token 一一对应，便于精确断言 token 语义。
+    def _batch(self, *tokens: int) -> list[ToolResultBlock]:
         return [
-            ToolResultBlock(tool_use_id=f"t{i + 1}", content="x" * n)
-            for i, n in enumerate(sizes)
+            ToolResultBlock(tool_use_id=f"t{i + 1}", content="中" * n)
+            for i, n in enumerate(tokens)
         ]
 
+    def _tokens(self, batch: list[ToolResultBlock]) -> int:
+        return sum(estimate_text_tokens(tr.content) for tr in batch)
+
     def test_under_limit_untouched(self, tmp_path: Path) -> None:
-        batch = self._batch(40_000, 40_000)
+        # 两条各 20K 中文 ≈ 20K token，合计 40K token，低于 60K 聚合上限
+        batch = self._batch(20_000, 20_000)
 
         apply_tool_result_budget(batch, tmp_path)
 
-        assert batch[0].content == "x" * 40_000
-        assert batch[1].content == "x" * 40_000
+        assert batch[0].content == "中" * 20_000
+        assert batch[1].content == "中" * 20_000
 
     def test_aggregate_spills_largest_first(self, tmp_path: Path) -> None:
-        # 5 条合计 225K+1，只需溢写最大的 t3 即可回到限额内
-        batch = self._batch(45_000, 45_000, 45_001, 45_000, 45_000)
+        # 5 条合计 62K token（14K + 4×12K），溢写最大的 t1 后回到 60K 内
+        batch = self._batch(14_000, 12_000, 12_000, 12_000, 12_000)
 
         apply_tool_result_budget(batch, tmp_path)
 
-        total = sum(len(tr.content) for tr in batch)
-        assert total <= AGGREGATE_CHAR_LIMIT
-        replaced = [tr for tr in batch if tr.content.startswith(PERSISTED_TAG)]
+        assert self._tokens(batch) <= AGGREGATE_TOKEN_LIMIT
+        replaced = [tr for tr in batch if tr.content.startswith(f"<{PERSISTED_TAG}>")]
         assert len(replaced) == 1
-        assert batch[2].content.startswith(PERSISTED_TAG)
+        assert batch[0].content.startswith(f"<{PERSISTED_TAG}>")
         # 溢写文件保存了完整内容
-        assert (tmp_path / "t3.txt").read_text() == "x" * 45_001
+        assert (tmp_path / "t1.txt").read_text() == "中" * 14_000
 
     def test_exempt_skipped(self, tmp_path: Path) -> None:
-        batch = self._batch(45_000, 45_000, 45_001, 45_000, 45_000)
+        batch = self._batch(14_000, 12_000, 12_000, 12_000, 12_000)
 
-        apply_tool_result_budget(batch, tmp_path, {"t3"})
+        apply_tool_result_budget(batch, tmp_path, {"t1"})
 
-        assert not batch[2].content.startswith(PERSISTED_TAG)
-        total = sum(len(tr.content) for tr in batch)
-        assert total <= AGGREGATE_CHAR_LIMIT
+        assert not batch[0].content.startswith(f"<{PERSISTED_TAG}>")
+        assert self._tokens(batch) <= AGGREGATE_TOKEN_LIMIT
 
     def test_all_exempt_accepts_overage(self, tmp_path: Path) -> None:
-        batch = self._batch(105_000, 105_000)
+        batch = self._batch(40_000, 40_000)
 
         apply_tool_result_budget(batch, tmp_path, {"t1", "t2"})
 
-        assert batch[0].content == "x" * 105_000
-        assert batch[1].content == "x" * 105_000
+        assert batch[0].content == "中" * 40_000
+        assert batch[1].content == "中" * 40_000
 
     def test_deterministic_output(self, tmp_path: Path) -> None:
-        batch1 = self._batch(45_000, 45_000, 45_001, 45_000, 45_000)
-        batch2 = self._batch(45_000, 45_000, 45_001, 45_000, 45_000)
+        batch1 = self._batch(14_000, 12_000, 12_000, 12_000, 12_000)
+        batch2 = self._batch(14_000, 12_000, 12_000, 12_000, 12_000)
 
         apply_tool_result_budget(batch1, tmp_path)
         apply_tool_result_budget(batch2, tmp_path)
@@ -139,7 +151,7 @@ class TestApplyToolResultBudget:
             assert a.content == b.content
 
     def test_idempotent_on_processed_batch(self, tmp_path: Path) -> None:
-        batch = self._batch(45_000, 45_000, 45_001, 45_000, 45_000)
+        batch = self._batch(14_000, 12_000, 12_000, 12_000, 12_000)
         apply_tool_result_budget(batch, tmp_path)
         snapshot = [tr.content for tr in batch]
 
@@ -200,6 +212,83 @@ class TestComputeCompactThreshold:
         soft = compute_compact_threshold(1_000_000)
         assert soft == 850_000
         assert soft / 1_000_000 == 0.85
+
+
+class TestComputeReminderThreshold:
+    def test_reminder_threshold(self) -> None:
+        assert compute_reminder_threshold(200_000) == 140_000  # 200K × 70%
+
+    def test_small_window_stays_positive(self) -> None:
+        assert compute_reminder_threshold(32_000) == 22_400  # 32K × 70%
+
+    def test_ordering_below_soft(self) -> None:
+        # 提醒线 < 软线 < 硬线，三档单调递增
+        w = 100_000
+        assert compute_reminder_threshold(w) < compute_compact_threshold(w) < compute_compact_threshold(w, manual=True)
+
+
+class TestContextReminder:
+    def test_build_reminder_mentions_percent(self) -> None:
+        text = build_context_reminder(75_000, 100_000)
+        assert "75%" in text
+
+    def test_inject_when_over_reminder_line(self) -> None:
+        conv = ConversationManager()
+        conv.add_user_message("hello")
+        injected = maybe_inject_context_reminder(conv, 75_000, 100_000)
+        assert injected is True
+        assert any(CONTEXT_REMINDER_MARKER in m.content for m in conv.history)
+
+    def test_no_inject_below_reminder_line(self) -> None:
+        conv = ConversationManager()
+        conv.add_user_message("hello")
+        injected = maybe_inject_context_reminder(conv, 50_000, 100_000)
+        assert injected is False
+        assert not any(CONTEXT_REMINDER_MARKER in m.content for m in conv.history)
+
+    def test_dedup_when_already_injected(self) -> None:
+        conv = ConversationManager()
+        conv.add_user_message("hello")
+        assert maybe_inject_context_reminder(conv, 75_000, 100_000) is True
+        # 已有一条提醒在历史里，第二次不重复注入
+        assert maybe_inject_context_reminder(conv, 80_000, 100_000) is False
+        reminders = [m for m in conv.history if CONTEXT_REMINDER_MARKER in m.content]
+        assert len(reminders) == 1
+
+
+class TestEstimateTextTokens:
+    def test_empty(self) -> None:
+        assert estimate_text_tokens("") == 0
+
+    def test_cjk_one_token_per_char(self) -> None:
+        # 中文 1 字符 ≈ 1 token
+        assert estimate_text_tokens("你好世界") == 4
+
+    def test_ascii_four_chars_per_token(self) -> None:
+        # 英文 4 字符 ≈ 1 token
+        assert estimate_text_tokens("abcdefgh") == 2
+
+    def test_mixed(self) -> None:
+        # 4 个中文（4 token）+ 8 个 ASCII（2 token）
+        assert estimate_text_tokens("你好世界abcdefgh") == 6
+
+
+class TestTruncateTextByTokens:
+    def test_empty_budget(self) -> None:
+        assert truncate_text_by_tokens("hello", 0) == ""
+
+    def test_no_truncate_within_budget(self) -> None:
+        assert truncate_text_by_tokens("你好世界", 4) == "你好世界"
+
+    def test_truncates_ascii(self) -> None:
+        # 8 ASCII 字符 = 2 token，预算 1 token 时截断到 4 字符
+        result = truncate_text_by_tokens("abcdefgh", 1)
+        assert estimate_text_tokens(result) <= 1
+
+    def test_truncates_cjk(self) -> None:
+        result = truncate_text_by_tokens("你好世界", 2)
+        assert result == "你好"
+        assert estimate_text_tokens(result) == 2
 
 
 class TestResolveKeepLimits:

@@ -338,19 +338,6 @@ async def test_finalize_redacts_sensitive():
 
 
 @pytest.mark.asyncio
-async def test_finalize_limits_size_and_marks_truncated():
-    async def big(_params):
-        return ToolResult(output="x" * 100)
-
-    runtime = ToolRuntime(_registry(_FakeTool(big)), max_output_chars=10)
-    tc = ToolCallComplete("t1", "FakeTool", {})
-
-    result, _ = await _collect(runtime.invoke(tc))
-    assert result.result.truncated is True
-    assert len(result.result.output) < 100
-
-
-@pytest.mark.asyncio
 async def test_timeout_maps_to_stable_error_code():
     async def slow(_params):
         await asyncio.sleep(10)

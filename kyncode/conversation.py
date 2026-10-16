@@ -70,6 +70,55 @@ def estimate_tokens(messages: list[Message]) -> int:
     return int(total / _CHARS_PER_TOKEN)
 
 
+def _is_cjk(ch: str) -> bool:
+    """判断单个字符是否属于 CJK 或全角（约 1 字符 ≈ 1 token）。"""
+    o = ord(ch)
+    return (
+        0x4E00 <= o <= 0x9FFF  # CJK 统一表意文字
+        or 0x3400 <= o <= 0x4DBF  # CJK 扩展 A
+        or 0x3040 <= o <= 0x30FF  # 日文假名
+        or 0xAC00 <= o <= 0xD7AF  # 谚文音节
+        or 0x3000 <= o <= 0x303F  # CJK 标点
+        or 0xFF00 <= o <= 0xFFEF  # 全角形式（含全角标点/数字/字母）
+    )
+
+
+# 非 CJK 字符（英文、数字、空白、半角标点）约 4 字符 ≈ 1 token。
+_ASCII_CHARS_PER_TOKEN = 4.0
+
+
+def estimate_text_tokens(text: str) -> int:
+    """对一段纯文本做 CJK 感知的 token 估算。
+
+    中文/日文/韩文及全角字符约 1 字符 ≈ 1 token，其余约 4 字符 ≈ 1 token。
+    这个区分很关键：同一个字符阈值下，纯中文内容的 token 占用约是纯英文的
+    4 倍。若统一按英文换算（如 _CHARS_PER_TOKEN = 3.5），会把中文内容的
+    token 系统性低估近 4 倍，让预算阈值对中文失效。用于工具结果预算等
+    需要「按 token 而非字符」把关的场景。
+    """
+    if not text:
+        return 0
+    cjk = sum(1 for ch in text if _is_cjk(ch))
+    other = len(text) - cjk
+    return cjk + int(other / _ASCII_CHARS_PER_TOKEN + 0.5)
+
+
+def truncate_text_by_tokens(text: str, token_budget: int) -> str:
+    """按 token 预算截断文本前缀，与 estimate_text_tokens 同口径。
+
+    逐字符累加 token 估算，累计超过 token_budget 时停止。返回的前缀保证
+    estimate_text_tokens(结果) <= token_budget。token_budget <= 0 时返回空串。
+    """
+    if token_budget <= 0 or not text:
+        return ""
+    used = 0
+    for i, ch in enumerate(text):
+        used += 1 if _is_cjk(ch) else 1 / _ASCII_CHARS_PER_TOKEN
+        if used > token_budget:
+            return text[:i]
+    return text
+
+
 @dataclass
 class ConversationManager:
     history: list[Message] = field(default_factory=list)

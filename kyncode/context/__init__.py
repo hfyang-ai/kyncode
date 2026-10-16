@@ -9,11 +9,14 @@ from kyncode.context.manager import (
     apply_tool_result_budget,
     auto_compact,
     build_compact_messages,
+    build_context_reminder,
     build_recovery_attachment,
     cleanup_tool_results,
     compute_compact_threshold,
+    compute_reminder_threshold,
     ensure_session_dir,
     is_spill_readback,
+    maybe_inject_context_reminder,
     spill_dir,
 )
 
@@ -28,10 +31,13 @@ __all__ = [
     "apply_tool_result_budget",
     "auto_compact",
     "build_compact_messages",
+    "build_context_reminder",
     "build_recovery_attachment",
     "cleanup_tool_results",
     "compute_compact_threshold",
+    "compute_reminder_threshold",
     "ensure_session_dir",
     "is_spill_readback",
+    "maybe_inject_context_reminder",
     "spill_dir",
 ]

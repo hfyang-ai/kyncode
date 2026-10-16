@@ -14,7 +14,9 @@ from kyncode.conversation import (
     ConversationManager,
     Message,
     ToolResultBlock,
+    estimate_text_tokens,
     estimate_tokens,
+    truncate_text_by_tokens,
 )
 from kyncode.serialization import build_messages
 
@@ -22,11 +24,13 @@ from kyncode.serialization import build_messages
 # 常量
 # ---------------------------------------------------------------------------
 
-# 单条消息内所有工具结果的聚合上限。单条结果的大小由 tools.MAX_OUTPUT_CHARS
+# 单条消息内所有工具结果的聚合上限（token）。单条结果的大小由 tools.MAX_OUTPUT_TOKENS
 # 在结果入历史时把关，这里只管聚合——一轮并行调多个工具时，每条都没超单条
-# 阈值，加起来却能撑爆上下文，这是单条阈值管不到的场景。
-AGGREGATE_CHAR_LIMIT = 200_000
-PREVIEW_CHARS = 2_000
+# 阈值，加起来却能撑爆上下文，这是单条阈值管不到的场景。用 token 而非字符，
+# 消除中英混排下 2~4 倍的失真。
+AGGREGATE_TOKEN_LIMIT = 60_000
+# 溢写后在历史里保留的预览长度（token）。足够模型判断是否需要读回、读回哪段。
+PREVIEW_TOKENS = 600
 
 # 摘要输出预留（token）。作为摘要输出上限的推导基数（compute_summary_max_tokens
 # 取它的 SUMMARY_OUTPUT_RATIO 倍）。
@@ -42,6 +46,13 @@ AUTO_COMPACT_PERCENT = 85
 # 硬触发线：上下文窗口的 MANUAL_COMPACT_PERCENT%（默认 95%）。超过此线强制压缩、
 # 绕过熔断器。
 MANUAL_COMPACT_PERCENT = 95
+# 提醒线：上下文窗口的 REMINDER_PERCENT%（默认 70%）。用量越过此线但还没到软线时，
+# 先注入一条 system-reminder 让模型自己收敛（少读大文件、精简输出、收尾当前子任务），
+# 争取在触发压缩前把用量压回去。这一档的代价只是一条短提醒，远低于一次摘要往返。
+REMINDER_PERCENT = 70
+# 软提醒的去重标记。compact 会把历史压成摘要、原提醒随之消失，届时需要重发，
+# 所以靠 has_reminder_containing 探测而非「只发一次」的状态位。
+CONTEXT_REMINDER_MARKER = "context-window-filling-up"
 
 # Layer 2 "保留近期原文"窗口（绝对值，作为大窗口下的上限）。压缩时，尾部消息按
 # token 累计不超过 recent、或消息数不少于 MIN_KEEP_MESSAGES（取先满足的条件保底）
@@ -130,14 +141,14 @@ def persist_tool_result(tool_use_id: str, content: str, session_dir: Path) -> Pa
 
 def make_persisted_preview(content: str, file_path: Path) -> str:
     size_kb = len(content) // 1024
-    preview = content[:PREVIEW_CHARS]
-    more = "\n..." if len(content) > PREVIEW_CHARS else ""
+    preview = truncate_text_by_tokens(content, PREVIEW_TOKENS)
+    more = "\n..." if estimate_text_tokens(content) > PREVIEW_TOKENS else ""
     return (
         f"<{PERSISTED_TAG}>\n"
         f"输出太大（{size_kb}KB），完整内容已保存到：\n"
         f"{file_path}\n"
         f"\n"
-        f"预览（前 2KB）：\n"
+        f"预览（前 {PREVIEW_TOKENS} tokens）：\n"
         f"{preview}{more}\n"
         f"</{PERSISTED_TAG}>"
     )
@@ -167,7 +178,7 @@ def apply_tool_result_budget(
 ) -> None:
     """在一轮工具结果进入对话历史之前执行聚合预算。
 
-    整批结果的总字符数超过 AGGREGATE_CHAR_LIMIT 时，从最大的开始逐条
+    整批结果的总 token 数超过 AGGREGATE_TOKEN_LIMIT 时，从最大的开始逐条
     溢写到磁盘、就地替换成预览，直到总量回到限额内。消息进历史前处理完，
     历史里的内容自此不再改动，Prompt Cache 前缀天然稳定。
 
@@ -176,18 +187,20 @@ def apply_tool_result_budget(
     接受超额。
     """
     exempt = exempt_ids or set()
-    total = sum(len(tr.content) for tr in tool_results)
-    if total <= AGGREGATE_CHAR_LIMIT:
+    total = sum(estimate_text_tokens(tr.content) for tr in tool_results)
+    if total <= AGGREGATE_TOKEN_LIMIT:
         return
 
-    # 按内容长度降序挑选：先溢写最大的，回到限额内需要动的条数最少。
-    ranked = sorted(tool_results, key=lambda tr: len(tr.content), reverse=True)
+    # 按 token 数降序挑选：先溢写最大的，回到限额内需要动的条数最少。
+    ranked = sorted(
+        tool_results, key=lambda tr: estimate_text_tokens(tr.content), reverse=True
+    )
     for tr in ranked:
-        if total <= AGGREGATE_CHAR_LIMIT:
+        if total <= AGGREGATE_TOKEN_LIMIT:
             break
         if tr.tool_use_id in exempt:
             continue
-        if len(tr.content) <= PREVIEW_CHARS:
+        if estimate_text_tokens(tr.content) <= PREVIEW_TOKENS:
             # 比预览还短的结果，溢写换不回空间
             continue
         try:
@@ -196,7 +209,7 @@ def apply_tool_result_budget(
             # 写盘失败就保留原文。消息随即定型进历史，不会再有重试
             continue
         preview = make_persisted_preview(tr.content, fp)
-        total -= len(tr.content) - len(preview)
+        total -= estimate_text_tokens(tr.content) - estimate_text_tokens(preview)
         tr.content = preview
 
 
@@ -213,6 +226,42 @@ def compute_compact_threshold(context_window: int, manual: bool = False) -> int:
     """
     percent = MANUAL_COMPACT_PERCENT if manual else AUTO_COMPACT_PERCENT
     return max(1, int(context_window * percent / 100))
+
+
+def compute_reminder_threshold(context_window: int) -> int:
+    """软提醒线：window × REMINDER_PERCENT%（70%）。
+
+    用量越过此线、尚未到软线时，注入一条 system-reminder 让模型收敛，
+    避免不必要的压缩。"""
+    return max(1, int(context_window * REMINDER_PERCENT / 100))
+
+
+def build_context_reminder(used_tokens: int, context_window: int) -> str:
+    """生成「上下文快满了」的收敛提醒文案。"""
+    pct = max(1, int(used_tokens * 100 / context_window))
+    return (
+        f"上下文用量已到窗口的 {pct}%。为避免触发压缩，请收敛输出："
+        "优先用 ReadFile(offset/limit) 或 Grep 读文件而非整读；"
+        "精简冗长输出；先收尾当前子任务，再开始新的。"
+    )
+
+
+def maybe_inject_context_reminder(
+    conversation: ConversationManager, used_tokens: int, context_window: int
+) -> bool:
+    """用量越过提醒线但未到软线时，注入一次收敛提醒。
+
+    返回是否注入了提醒。用 has_reminder_containing 去重：compact 会把历史压成
+    摘要、原提醒随之消失，届时重发即可，无需维护额外的状态位。
+    """
+    if used_tokens < compute_reminder_threshold(context_window):
+        return False
+    if conversation.has_reminder_containing(CONTEXT_REMINDER_MARKER):
+        return False
+    conversation.add_system_reminder(
+        f"{CONTEXT_REMINDER_MARKER}\n{build_context_reminder(used_tokens, context_window)}"
+    )
+    return True
 
 
 def resolve_keep_limits(context_window: int) -> tuple[int, int]:
@@ -758,6 +807,9 @@ async def auto_compact(
         # 1) 软触发线（85%）：低于此线不需要压缩
         soft_threshold = compute_compact_threshold(context_window, manual=False)
         if current < soft_threshold:
+            # 软线之下还有一档提醒线（70%）：越过了就注入收敛提醒，让模型
+            # 自己把用量压回去，避免走到压缩。没越过则什么都不做。
+            maybe_inject_context_reminder(conversation, current, context_window)
             return None
 
         # 2) 硬触发线（95%）：超过此线强制压缩，绕过熔断器，

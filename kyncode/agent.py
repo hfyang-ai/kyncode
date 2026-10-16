@@ -40,7 +40,7 @@ from kyncode.context import (
     auto_compact,
     ensure_session_dir,
 )
-from kyncode.conversation import ConversationManager
+from kyncode.conversation import ConversationManager, estimate_text_tokens
 from kyncode.hooks import HookContext, HookEngine
 from kyncode.memory.auto_memory import MemoryManager
 from kyncode.permissions import (
@@ -55,7 +55,7 @@ from kyncode.permissions.approval import (
 from kyncode.prompts import build_environment_context
 from kyncode.tools import ToolRegistry
 from kyncode.tools.base import (
-    MAX_OUTPUT_CHARS,
+    MAX_OUTPUT_TOKENS,
     ToolCallComplete,
     ToolResult,
 )
@@ -100,9 +100,7 @@ class Agent:
         )
         # 工具执行管线（prepare → execute → finalize）。三个执行路径都委托给它，
         # 交互式审批路径额外传入 interactive=True。
-        self.tool_runtime = ToolRuntime(
-            registry, permission_checker=permission_checker
-        )
+        self.tool_runtime = ToolRuntime(registry, permission_checker=permission_checker)
         self.context_window = context_window
         self.compact_breaker = CompactCircuitBreaker()
         # 保存重建工作上下文所需的快照，在 Layer 2 压缩对话后使用：
@@ -428,7 +426,6 @@ class Agent:
                 self._snapshot_for_recovery(tc, result)
         yield result, elapsed
 
-
     def _record_recent_tool(self, name: str) -> None:
         """记下刚执行完的工具名，供记忆召回的选择器参考。
 
@@ -493,6 +490,31 @@ class Agent:
                 )
                 # 递归调用自身处理尾随请求
                 await self._extract_memories(conversation)
+
+    def maybe_persist_or_truncate(
+        self, tool_use_id: str, text: str, exempt_ids: set[str] | None = None
+    ) -> str:
+        from kyncode.context.manager import (
+            make_persisted_preview,
+            persist_tool_result,
+        )
+
+        # 超过阈值的输出持久化到磁盘，对话里只保留预览和文件路径。
+        # 溢写文件的回读结果豁免；写盘失败会原样保留，同一块磁盘
+        # 聚合预算也不必再试，所以两种结果都标记豁免
+        if exempt_ids is not None and tool_use_id in exempt_ids:
+            return text
+        if estimate_text_tokens(text) > MAX_OUTPUT_TOKENS:
+            try:
+                fp = persist_tool_result(tool_use_id, text, self.session_dir)
+            except OSError:
+                if exempt_ids is not None:
+                    exempt_ids.add(tool_use_id)
+                return text
+            if exempt_ids is not None:
+                exempt_ids.add(tool_use_id)
+            return make_persisted_preview(text, fp)
+        return text
 
     async def manual_compact(
         self, conversation: ConversationManager
@@ -575,28 +597,3 @@ class Agent:
             await self.hook_engine.run_hooks("post_tool_use", hook_ctx)
 
         return result
-
-    def _maybe_persist_or_truncate(
-        self, tool_use_id: str, text: str, exempt_ids: set[str] | None = None
-    ) -> str:
-        from kyncode.context.manager import (
-            make_persisted_preview,
-            persist_tool_result,
-        )
-
-        # 超过阈值的输出持久化到磁盘，对话里只保留预览和文件路径。
-        # 溢写文件的回读结果豁免；写盘失败会原样保留，同一块磁盘
-        # 聚合预算也不必再试，所以两种结果都标记豁免
-        if exempt_ids is not None and tool_use_id in exempt_ids:
-            return text
-        if len(text) > MAX_OUTPUT_CHARS:
-            try:
-                fp = persist_tool_result(tool_use_id, text, self.session_dir)
-            except OSError:
-                if exempt_ids is not None:
-                    exempt_ids.add(tool_use_id)
-                return text
-            if exempt_ids is not None:
-                exempt_ids.add(tool_use_id)
-            return make_persisted_preview(text, fp)
-        return text

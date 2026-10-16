@@ -10,7 +10,8 @@ from pydantic import BaseModel
 from test_agent import MockLLMClient
 
 from kyncode.agent import Agent
-from kyncode.conversation import ConversationManager
+from kyncode.context.manager import AGGREGATE_TOKEN_LIMIT
+from kyncode.conversation import ConversationManager, estimate_text_tokens
 from kyncode.tools import ToolRegistry
 from kyncode.tools.base import (
     StreamEnd,
@@ -82,7 +83,8 @@ async def test_ingest_spills_single_oversized_result(
         ]
     )
     registry = ToolRegistry()
-    registry.register(FixedOutputTool("BigTool", "x" * 60000))
+    # 20K 中文字符 ≈ 20K token，超过单条 15K token 阈值
+    registry.register(FixedOutputTool("BigTool", "中" * 20_000))
     agent = Agent(client, registry, "anthropic", work_dir=str(tmp_path))
     conv = ConversationManager()
     conv.add_user_message("go")
@@ -96,14 +98,14 @@ async def test_ingest_spills_single_oversized_result(
     # 溢写文件保存了完整原文
     spill = agent.session_dir / "t1.txt"
     assert spill.exists()
-    assert len(spill.read_text(encoding="utf-8")) == 60000
+    assert len(spill.read_text(encoding="utf-8")) == 20_000
 
 
 @pytest.mark.asyncio
 async def test_ingest_readback_exempt(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     registry = ToolRegistry()
-    registry.register(FakeReadFileTool("y" * 60000))
+    registry.register(FakeReadFileTool("中" * 20_000))
     # 先构造 agent 拿到 session_dir，再让 ReadFile 指向该目录下的文件
     client_placeholder = MockLLMClient([])
     probe = Agent(client_placeholder, registry, "anthropic", work_dir=str(tmp_path))
@@ -127,18 +129,19 @@ async def test_ingest_readback_exempt(tmp_path: Path, monkeypatch) -> None:
 
     # 回读结果豁免溢写：原文进历史，且没有生成新的溢写文件
     tr = _tool_results_msg(conv).tool_results[0]
-    assert len(tr.content) == 60000
+    assert len(tr.content) == 20_000
     assert not (agent.session_dir / "t_rb.txt").exists()
 
 
 @pytest.mark.asyncio
 async def test_ingest_aggregate_spills_largest(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
-    sizes = {"T1": 45000, "T2": 45000, "T3": 45001, "T4": 45000, "T5": 45000}
+    # 中文字符 ≈ token：5 条合计约 62K token，溢写最大的 t3 后回到 60K 内
+    sizes = {"T1": 12_000, "T2": 12_000, "T3": 14_000, "T4": 12_000, "T5": 12_000}
     registry = ToolRegistry()
     calls = []
     for name, n in sizes.items():
-        registry.register(FixedOutputTool(name, "z" * n))
+        registry.register(FixedOutputTool(name, "中" * n))
         calls.append(ToolCallComplete("t" + name[1:].lower(), name, {}))
     client = MockLLMClient(
         [
@@ -154,8 +157,8 @@ async def test_ingest_aggregate_spills_largest(tmp_path: Path, monkeypatch) -> N
         pass
 
     msg = _tool_results_msg(conv)
-    total = sum(len(tr.content) for tr in msg.tool_results)
-    assert total <= 200000
+    total = sum(estimate_text_tokens(tr.content) for tr in msg.tool_results)
+    assert total <= AGGREGATE_TOKEN_LIMIT
     previews = [
         tr for tr in msg.tool_results if tr.content.startswith("<persisted-output>")
     ]
