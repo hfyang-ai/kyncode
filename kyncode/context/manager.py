@@ -4,7 +4,8 @@ import os
 import shutil
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -27,24 +28,37 @@ from kyncode.serialization import build_messages
 AGGREGATE_CHAR_LIMIT = 200_000
 PREVIEW_CHARS = 2_000
 
+# 摘要输出预留（token）。作为摘要输出上限的推导基数（compute_summary_max_tokens
+# 取它的 SUMMARY_OUTPUT_RATIO 倍）。
 SUMMARY_OUTPUT_RESERVE = 20_000
-# 软触发安全边距：effectiveWindow − 13K 为自动压缩触发线，走熔断器保护
-AUTO_COMPACT_SAFETY_MARGIN = 13_000
-# 硬触发安全边距：effectiveWindow − 3K 为强制压缩触发线，绕过熔断器
-MANUAL_COMPACT_SAFETY_MARGIN = 3_000
+# 摘要输出上限占预留量的比例， min(0.8 × reserveTokens, model.maxTokens)。
+SUMMARY_OUTPUT_RATIO = 0.8
+# SUMMARY_PROMPT 自身的估算 token 数，用于「压缩请求 = 前缀 + prompt + 输出」
+# 三者之和是否塞得下窗口的判断。
+SUMMARY_PROMPT_TOKENS = 3_000
 
-# Layer 2 "保留近期原文"窗口。压缩时，尾部消息按 token 累计不超过
-# KEEP_RECENT_TOKENS、或消息数不少于 MIN_KEEP_MESSAGES（取先满足的条件保底）保留原文，
-# 不纳入摘要。累计超过 KEEP_MAX_TOKENS 时停止，防止单条超大消息吞掉整个窗口。
+# 软触发线：上下文窗口的 AUTO_COMPACT_PERCENT%（默认 85%）。低于此线不压缩。
+AUTO_COMPACT_PERCENT = 85
+# 硬触发线：上下文窗口的 MANUAL_COMPACT_PERCENT%（默认 95%）。超过此线强制压缩、
+# 绕过熔断器。
+MANUAL_COMPACT_PERCENT = 95
+
+# Layer 2 "保留近期原文"窗口（绝对值，作为大窗口下的上限）。压缩时，尾部消息按
+# token 累计不超过 recent、或消息数不少于 MIN_KEEP_MESSAGES（取先满足的条件保底）
+# 保留原文，不纳入摘要。累计超过 cap 时停止，防止单条超大消息吞掉整个窗口。
 KEEP_RECENT_TOKENS = 10_000
 MIN_KEEP_MESSAGES = 5
 KEEP_MAX_TOKENS = 40_000
+# 保留窗口占上下文窗口的比例（小窗口下用比例收缩，避免绝对 token 值吞掉全部历史、
+# 让压缩静默失效）。
+KEEP_RECENT_PERCENT = 15
+KEEP_MAX_PERCENT = 30
 
 # 前缀 token 数低于此阈值时不值得做摘要——摘要往返的开销比回收的空间还大，
-# 退化为不压缩、保留原始历史（避免「压了个寂寞」）。
+# 退化为不压缩、保留原始历史。
 MIN_SUMMARIZE_PREFIX_TOKENS = 2_000
 
-PERSISTED_TAG = "<persisted-output>"
+PERSISTED_TAG = "persisted-output"
 
 
 # ---------------------------------------------------------------------------
@@ -119,13 +133,13 @@ def make_persisted_preview(content: str, file_path: Path) -> str:
     preview = content[:PREVIEW_CHARS]
     more = "\n..." if len(content) > PREVIEW_CHARS else ""
     return (
-        f"{PERSISTED_TAG}\n"
+        f"<{PERSISTED_TAG}>\n"
         f"输出太大（{size_kb}KB），完整内容已保存到：\n"
         f"{file_path}\n"
         f"\n"
         f"预览（前 2KB）：\n"
         f"{preview}{more}\n"
-        f"</persisted-output>"
+        f"</{PERSISTED_TAG}>"
     )
 
 
@@ -192,9 +206,31 @@ def apply_tool_result_budget(
 
 
 def compute_compact_threshold(context_window: int, manual: bool = False) -> int:
-    effective = context_window - SUMMARY_OUTPUT_RESERVE
-    margin = MANUAL_COMPACT_SAFETY_MARGIN if manual else AUTO_COMPACT_SAFETY_MARGIN
-    return effective - margin
+    """压缩触发线，按上下文窗口的比例计算
+
+    软线 = window × AUTO_COMPACT_PERCENT%（85%）
+    硬线 = window × MANUAL_COMPACT_PERCENT%（95%）。
+    """
+    percent = MANUAL_COMPACT_PERCENT if manual else AUTO_COMPACT_PERCENT
+    return max(1, int(context_window * percent / 100))
+
+
+def resolve_keep_limits(context_window: int) -> tuple[int, int]:
+    """窗口自适应的保留窗口限额。
+
+    返回 (recent, cap)：
+    - recent：尾部至少保留多少 token 原文（软目标）
+    - cap：保留窗口的硬上限（防止单条超大消息吞掉窗口）
+
+    小窗口下用绝对值会吞掉全部历史、让压缩静默失效（旧 KEEP_RECENT_TOKENS = 10K
+    在 32K 窗口下已是窗口的 31%）。改成「绝对值与窗口比例的较小值」，保证无论窗口
+    多大，保留窗口都不会占据不合理比例；大窗口下维持原绝对值不变。
+    """
+    recent = min(
+        KEEP_RECENT_TOKENS, max(int(context_window * KEEP_RECENT_PERCENT / 100), 1)
+    )
+    cap = min(KEEP_MAX_TOKENS, max(int(context_window * KEEP_MAX_PERCENT / 100), 1))
+    return recent, cap
 
 
 SUMMARY_PROMPT = """\
@@ -507,14 +543,19 @@ def _message_tokens(msg: Message) -> int:
     return estimate_tokens([msg])
 
 
-def _compute_keep_start_index(messages: list[Message]) -> int:
+def _compute_keep_start_index(
+    messages: list[Message], context_window: int | None = None
+) -> int:
     """决定压缩时尾部要原样保留多少条消息。
 
     从尾部向头部遍历 `messages`，逐条累加 token 估算值。只要还有任一保底条件
-    未满足——累计 token 尚未达到 KEEP_RECENT_TOKENS，或保留的消息数仍少于
+    未满足——累计 token 尚未达到保留窗口的 recent 目标，或保留的消息数仍少于
     MIN_KEEP_MESSAGES——当前消息就会被纳入保留窗口；但一旦纳入下一条消息会使
-    保留总量超过 KEEP_MAX_TOKENS，遍历立即停止（这样单条超大的尾部消息就不会把
+    保留总量超过 cap 上限，遍历立即停止（这样单条超大的尾部消息就不会把
     整个 history 都拖进窗口）。
+
+    传了 context_window 时，recent/cap 按窗口比例收缩（resolve_keep_limits），
+    避免小窗口下绝对 token 值吞掉全部历史、让压缩静默失效。
 
     返回第一条被保留消息的下标（keepStartIndex）。原始遍历结束后，必要时会把这个
     下标往前挪，确保被保留的 tool_result 不会和它对应的 tool_use 被拆散——
@@ -523,6 +564,11 @@ def _compute_keep_start_index(messages: list[Message]) -> int:
     n = len(messages)
     if n == 0:
         return 0
+
+    if context_window and context_window > 0:
+        recent_tokens, max_tokens = resolve_keep_limits(context_window)
+    else:
+        recent_tokens, max_tokens = KEEP_RECENT_TOKENS, KEEP_MAX_TOKENS
 
     kept_tokens = 0
     kept_count = 0
@@ -533,7 +579,7 @@ def _compute_keep_start_index(messages: list[Message]) -> int:
 
         # 在已经保留了至少一条消息的前提下，如果纳入当前消息会突破硬上限则停止
         # （但绝不拒绝保留最后一条消息，即使它单独就超限）。
-        if kept_count > 0 and kept_tokens + tok > KEEP_MAX_TOKENS:
+        if kept_count > 0 and kept_tokens + tok > max_tokens:
             break
 
         kept_tokens += tok
@@ -542,7 +588,7 @@ def _compute_keep_start_index(messages: list[Message]) -> int:
 
         # 保底条件已满足（token 下限或消息条数下限达到其一）：
         # 近期原文保留足够了，停止回溯。
-        if kept_tokens >= KEEP_RECENT_TOKENS or kept_count >= MIN_KEEP_MESSAGES:
+        if kept_tokens >= recent_tokens or kept_count >= MIN_KEEP_MESSAGES:
             break
 
     return _align_keep_start_to_tool_pair(messages, keep_start)
@@ -630,6 +676,59 @@ class UsageAnchor:
 
 
 # ---------------------------------------------------------------------------
+# 摘要输出上限
+# ---------------------------------------------------------------------------
+
+
+def compute_summary_max_tokens(
+    client: Any,
+    context_window: int | None = None,
+    used: int = 0,
+) -> int:
+    """摘要这一次调用的输出上限。
+
+    从预留量推导，而不是直接用 client 的全局上限：主循环在撞
+    `stop_reason == "max_tokens"` 时会把上限永久提到 MAX_TOKENS_CEILING（64K），
+    thinking 模式下默认值也是 64K，两者都远超 SUMMARY_OUTPUT_RESERVE 的 20K——
+    摘要若跟着涨，压缩后的状态（摘要 + 恢复附件 + 保留尾部）会比压缩前更接近
+    触发线，形成连续压缩。
+
+    知道 context_window 和 used（待摘要前缀的估算 token）时，再按剩余空间夹一次：
+    压缩请求 = 前缀 + 摘要 prompt + 摘要输出，三者必须一起塞进窗口。窗口小、
+    前缀大时，按比例夹紧才不会出现「请求比窗口还大」。
+    """
+    cap = int(SUMMARY_OUTPUT_RESERVE * SUMMARY_OUTPUT_RATIO)
+    client_cap = getattr(client, "max_output_tokens", 0)
+    if isinstance(client_cap, int) and client_cap > 0:
+        cap = min(cap, client_cap)
+    if context_window and context_window > 0 and used:
+        headroom = context_window - used - SUMMARY_PROMPT_TOKENS
+        cap = min(cap, max(headroom, 1))
+    return max(cap, 1)
+
+
+@contextmanager
+def _summary_output_cap(
+    client: Any, context_window: int | None = None, used: int = 0
+) -> Generator[None, None, None]:
+    """在摘要调用期间临时压低 client 的输出上限，结束后恢复原值。
+
+    没有 per-call 的 max_tokens 入口，只能临时改写共享状态。用 context
+    manager 保证异常路径也会还原，不把压低的值泄漏给主循环。
+    """
+    original = getattr(client, "max_output_tokens", None)
+    target = compute_summary_max_tokens(client, context_window, used)
+    if original is None or original == target:
+        yield
+        return
+    client.max_output_tokens = target
+    try:
+        yield
+    finally:
+        client.max_output_tokens = original
+
+
+# ---------------------------------------------------------------------------
 # Auto-compact 编排器
 # ---------------------------------------------------------------------------
 
@@ -656,12 +755,12 @@ async def auto_compact(
         pass
     else:
         # 双阈值判断：
-        # 1) 软触发线（auto margin 13K）：低于此线不需要压缩
+        # 1) 软触发线（85%）：低于此线不需要压缩
         soft_threshold = compute_compact_threshold(context_window, manual=False)
         if current < soft_threshold:
             return None
 
-        # 2) 硬触发线（manual margin 3K）：超过此线强制压缩，绕过熔断器，
+        # 2) 硬触发线（95%）：超过此线强制压缩，绕过熔断器，
         #    因为上下文已经过于接近窗口上限，不能冒跳过的风险
         hard_threshold = compute_compact_threshold(context_window, manual=True)
         if current >= hard_threshold:
@@ -680,7 +779,7 @@ async def auto_compact(
 
     # 决定保留多少尾部消息原文。只有前缀 messages[:keep_start] 会被摘要；
     # messages[keep_start:] 原样保留，让模型看到近期原文而非靠有损摘要复述。
-    keep_start = _compute_keep_start_index(effective_history)
+    keep_start = _compute_keep_start_index(effective_history, context_window)
     to_summarize = effective_history[:keep_start]
     keep_tail = effective_history[keep_start:]
 
@@ -718,19 +817,29 @@ async def auto_compact(
 
     max_retries = 3
     llm_output: str | None = None
+    # 压缩请求 = 待摘要前缀 + 摘要 prompt + 摘要输出，三者要一起塞进窗口。
+    # 用前缀的估算 token 作为 used 来夹摘要输出上限。
+    summary_prefix_tokens = estimate_tokens(to_summarize)
 
-    for attempt in range(max_retries):
+    for _ in range(max_retries):
         try:
             from kyncode.tools.base import StreamEnd, TextDelta
 
             collected_text = ""
-            async for event in client.stream(
-                summary_conv, system=SUMMARY_PROMPT, tools=tool_schemas
-            ):
-                if isinstance(event, TextDelta):
-                    collected_text += event.text
-                elif isinstance(event, StreamEnd):
-                    pass
+            stop_reason = ""
+            with _summary_output_cap(client, context_window, summary_prefix_tokens):
+                async for event in client.stream(
+                    summary_conv, system=SUMMARY_PROMPT, tools=tool_schemas
+                ):
+                    if isinstance(event, TextDelta):
+                        collected_text += event.text
+                    elif isinstance(event, StreamEnd):
+                        stop_reason = event.stop_reason
+
+            # 撞输出上限的摘要是截断的、不完整的，落库会污染后续所有轮次，
+            if stop_reason in ("max_tokens", "length"):
+                continue
+
             llm_output = collected_text
             break
 

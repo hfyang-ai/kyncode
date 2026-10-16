@@ -10,19 +10,23 @@ from kyncode.context.manager import (
     KEEP_RECENT_TOKENS,
     MIN_KEEP_MESSAGES,
     PERSISTED_TAG,
+    SUMMARY_PROMPT_TOKENS,
     CompactCircuitBreaker,
     _align_keep_start_to_tool_pair,
     _compute_keep_start_index,
+    _summary_output_cap,
     apply_tool_result_budget,
     auto_compact,
     build_compact_messages,
     cleanup_tool_results,
     compute_compact_threshold,
+    compute_summary_max_tokens,
     ensure_session_dir,
     extract_summary,
     is_spill_readback,
     make_persisted_preview,
     persist_tool_result,
+    resolve_keep_limits,
 )
 from kyncode.conversation import (
     _CHARS_PER_TOKEN,
@@ -174,13 +178,46 @@ class TestIsSpillReadback:
 
 class TestComputeCompactThreshold:
     def test_auto_threshold(self) -> None:
-        assert compute_compact_threshold(200_000) == 167_000
+        assert compute_compact_threshold(200_000) == 170_000  # 200K × 85%
 
     def test_manual_threshold(self) -> None:
-        assert compute_compact_threshold(200_000, manual=True) == 177_000
+        assert compute_compact_threshold(200_000, manual=True) == 190_000  # 200K × 95%
 
     def test_smaller_window(self) -> None:
-        assert compute_compact_threshold(128_000) == 95_000
+        assert compute_compact_threshold(128_000) == 108_800  # 128K × 85%
+
+    def test_small_window_stays_positive(self) -> None:
+        # 旧的绝对 offset（window − 33K）在 32K 下软线算出 −1K、熔断器失效。
+        # 比例制下软/硬线始终为正，且硬线 > 软线。
+        soft = compute_compact_threshold(32_000)
+        hard = compute_compact_threshold(32_000, manual=True)
+        assert soft == 27_200
+        assert hard == 30_400
+        assert 0 < soft < hard < 32_000
+
+    def test_large_window_not_edge(self) -> None:
+        # 1M 窗口下软线不再贴边（旧的 window − 33K 只占窗口 96.7%）。
+        soft = compute_compact_threshold(1_000_000)
+        assert soft == 850_000
+        assert soft / 1_000_000 == 0.85
+
+
+class TestResolveKeepLimits:
+    def test_large_window_keeps_absolute_limits(self) -> None:
+        # 大窗口下维持原绝对值。
+        assert resolve_keep_limits(200_000) == (KEEP_RECENT_TOKENS, KEEP_MAX_TOKENS)
+
+    def test_small_window_shrinks_by_percent(self) -> None:
+        # 32K 窗口下 10K 绝对值占 31%，按 15% / 30% 收缩。
+        recent, cap = resolve_keep_limits(32_000)
+        assert recent == 4_800  # 32K × 15%
+        assert cap == 9_600  # 32K × 30%
+
+    def test_limits_never_exceed_window_share(self) -> None:
+        for window in (16_000, 32_000, 64_000, 200_000):
+            recent, cap = resolve_keep_limits(window)
+            assert recent <= cap
+            assert cap <= window
 
 
 # ---------------------------------------------------------------------------
@@ -574,6 +611,101 @@ def _make_long_conversation(
             )
         )
     return conv
+
+
+class TestComputeSummaryMaxTokens:
+    def test_capped_by_reserve_ratio(self) -> None:
+        class _Big:
+            max_output_tokens = 64_000
+
+        assert compute_summary_max_tokens(_Big()) == 16_000  # 20K × 0.8
+
+    def test_never_exceeds_client_cap(self) -> None:
+        class _Small:
+            max_output_tokens = 4_000
+
+        assert compute_summary_max_tokens(_Small()) == 4_000
+
+    def test_client_without_cap_falls_back_to_reserve(self) -> None:
+        class _None:
+            pass
+
+        assert compute_summary_max_tokens(_None()) == 16_000
+
+    def test_shrinks_when_window_headroom_is_tight(self) -> None:
+        # 32K 窗口、前缀占满 85%（27.2K）时，剩余空间只剩 ~1.8K，
+        # 输出上限必须按窗口夹紧，否则压缩请求比窗口还大。
+        class _Client:
+            max_output_tokens = 64_000
+
+        client = _Client()
+        used = compute_compact_threshold(32_000)  # 27_200
+        assert compute_summary_max_tokens(client, 32_000, used) < 16_000
+
+    def test_compaction_request_fits_window(self) -> None:
+        # 每个窗口尺寸下，压缩请求各部分之和都必须留在窗口内。
+        class _Client:
+            max_output_tokens = 64_000
+
+        client = _Client()
+        for window in (32_000, 48_000, 64_000, 128_000, 200_000, 1_000_000):
+            prefix = compute_compact_threshold(window)  # 软线 = 触发时的最大前缀
+            out = compute_summary_max_tokens(client, window, prefix)
+            assert prefix + SUMMARY_PROMPT_TOKENS + out <= window, window
+
+    def test_output_cap_does_not_leak_to_main_loop(self) -> None:
+        class _Client:
+            max_output_tokens = 64_000
+
+        client = _Client()
+        with _summary_output_cap(client):
+            assert client.max_output_tokens == 16_000
+        assert client.max_output_tokens == 64_000
+
+    def test_output_cap_restored_on_exception(self) -> None:
+        class _Client:
+            max_output_tokens = 64_000
+
+        client = _Client()
+        with pytest.raises(RuntimeError):
+            with _summary_output_cap(client):
+                raise RuntimeError("boom")
+        assert client.max_output_tokens == 64_000
+
+
+@pytest.mark.asyncio
+class TestSummaryTruncation:
+    async def test_truncated_summary_is_rejected(self, tmp_path: Path) -> None:
+        """撞 max_tokens 上限的摘要是截断的、不完整的，必须判失败而非落库。"""
+
+        class _TruncatingClient:
+            max_output_tokens = 64_000
+
+            async def stream(self, conversation, system="", tools=None):
+                from kyncode.tools.base import StreamEnd, TextDelta
+
+                yield TextDelta(text="<summary>truncated")
+                yield StreamEnd(
+                    stop_reason="max_tokens", input_tokens=10, output_tokens=10
+                )
+
+        conv = _make_long_conversation()
+        before_len = len(conv.history)
+        conv.record_usage_anchor(input_tokens=200_000)
+
+        result = await auto_compact(
+            conv,
+            _TruncatingClient(),
+            context_window=200_000,
+            session_dir=tmp_path,
+            protocol="anthropic",
+        )
+
+        # 返回失败字符串，而不是 CompactEvent（截断摘要不得落库）。
+        assert isinstance(result, str)
+        assert "失败" in result
+        # 历史未被替换（摘要未成功，不能清空原始历史）。
+        assert len(conv.history) == before_len
 
 
 @pytest.mark.asyncio
