@@ -109,6 +109,14 @@ async def handle_session(ctx: CommandContext) -> None:
         ctx.config["set_conversation"](conv)
         if ctx.agent:
             ctx.agent._loop_count = 0
+            # 恢复运行时心智：激活的 skill、已读文件、技能快照。set_session 已把
+            # agent.session_id 切到当前会话，state 路径随之就位。
+            ctx.agent.load_runtime_state()
+            notice = ctx.agent.build_resume_notice()
+            if notice:
+                # 注入给模型的一条恢复提示（不参与 UI 渲染）：哪些文件上次读过
+                # 且未变、哪些变了需重读、哪些 skill 仍激活。
+                conv.add_system_reminder(notice)
         await ctx.config["render_restored"](messages)
         ctx.ui.add_system_message(
             f"会话已恢复: {session_id} ({result.session.meta.message_count} msgs)"

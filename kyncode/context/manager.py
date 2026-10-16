@@ -482,6 +482,49 @@ class RecoveryState:
         records.sort(key=lambda r: r.timestamp, reverse=True)
         return records
 
+    def to_dict(self) -> dict[str, Any]:
+        """序列化成可落盘的 dict（文件快照 + 技能快照）。
+
+        全量保存 content/body——这是压缩后附件的唯一数据来源，截断会永久
+        丢失可恢复的上下文。state 文件只按 path/name 去重，规模受控。
+        """
+        with self._lock:
+            files = {
+                path: {"content": rec.content, "timestamp": rec.timestamp}
+                for path, rec in self._files.items()
+            }
+            skills = {
+                name: {"body": rec.body, "timestamp": rec.timestamp}
+                for name, rec in self._skills.items()
+            }
+        return {"files": files, "skills": skills}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RecoveryState:
+        """to_dict 的逆操作，损坏字段降级跳过，保证单条坏数据不崩 resume。"""
+        state = cls()
+        files = data.get("files") or {}
+        if isinstance(files, dict):
+            for path, info in files.items():
+                if not isinstance(info, dict):
+                    continue
+                state._files[path] = FileReadRecord(
+                    path=path,
+                    content=info.get("content", ""),
+                    timestamp=float(info.get("timestamp", 0.0)),
+                )
+        skills = data.get("skills") or {}
+        if isinstance(skills, dict):
+            for name, info in skills.items():
+                if not isinstance(info, dict):
+                    continue
+                state._skills[name] = SkillInvocationRecord(
+                    name=name,
+                    body=info.get("body", ""),
+                    timestamp=float(info.get("timestamp", 0.0)),
+                )
+        return state
+
 
 def _approx_tokens(s: str) -> int:
     if not s:

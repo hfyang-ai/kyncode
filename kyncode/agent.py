@@ -559,6 +559,101 @@ class Agent:
             )
         return ErrorEvent(message=result or "压缩失败：对话历史为空或未达到压缩条件")
 
+    # ------------------------------------------------------------------
+    # 运行时状态持久化：Session 只存对话，不存 agent 的运行时心智。
+    # active_skills / recovery_state / file_state_cache 这些纯内存态崩溃即丢，
+    # 这里把它们落盘到 per-session 的 state 文件，resume 时重建。
+    # ------------------------------------------------------------------
+
+    def runtime_state_path(self) -> Path:
+        """运行时心智快照的落盘路径，与 session jsonl / ledger 并排。"""
+        sid = self.session_id or "default"
+        return Path(self.work_dir) / ".kyncode" / "sessions" / f"{sid}.state.json"
+
+    def _file_state_cache(self) -> Any:
+        """拿到与 ReadFile/EditFile/WriteFile 共享的那个 FileStateCache 实例。"""
+        read_tool = self.registry.get("ReadFile")
+        return getattr(read_tool, "_state_cache", None)
+
+    def save_runtime_state(self) -> None:
+        """把崩溃即丢的运行时心智落盘：激活的 skill、已读文件、技能快照。"""
+        fsc = self._file_state_cache()
+        data: dict[str, Any] = {
+            "active_skills": dict(self.active_skills),
+            "recovery_state": self.recovery_state.to_dict(),
+            "file_state_cache": fsc.to_dict() if fsc is not None else {},
+        }
+        path = self.runtime_state_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError:
+            # 落盘失败不阻断主流程：这只是「恢复能力」的增强，不是硬依赖。
+            pass
+
+    def load_runtime_state(self) -> None:
+        """resume 时从磁盘重建运行时心智（active_skills / recovery_state / file_state_cache）。
+
+        读不到文件或数据损坏时静默跳过，绝不让恢复动作本身把 resume 打断。
+        """
+        path = self.runtime_state_path()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(data, dict):
+            return
+
+        skills = data.get("active_skills")
+        if isinstance(skills, dict):
+            self.active_skills = {str(k): str(v) for k, v in skills.items()}
+
+        rs = data.get("recovery_state")
+        if isinstance(rs, dict):
+            self.recovery_state = RecoveryState.from_dict(rs)
+
+        fsc_data = data.get("file_state_cache")
+        fsc = self._file_state_cache()
+        if isinstance(fsc_data, dict) and fsc is not None:
+            fsc.load_dict(fsc_data)
+
+    def build_resume_notice(self) -> str:
+        """resume 时生成一条注入给模型的恢复提示。
+
+        用 FileStateCache 的 mtime 判断哪些已读文件内容没变（历史里的读取结果
+        仍有效、不必重读）、哪些变了（需重读），并列出仍激活的 skill。没有值得
+        提示的内容时返回空串。
+        """
+        sections: list[str] = []
+
+        fsc = self._file_state_cache()
+        if fsc is not None:
+            unchanged, changed = fsc.freshness()
+            if unchanged or changed:
+                buf = ["## 文件状态恢复"]
+                if unchanged:
+                    buf.append(
+                        "以下文件在上次会话中读取过、内容未变化，历史对话里的读取结果"
+                        "仍有效，无需重复读取："
+                    )
+                    buf.extend(f"- {p}" for p in unchanged)
+                if changed:
+                    buf.append(
+                        "以下文件在上次会话中读取过、但之后被修改或删除，请重新读取最新内容："
+                    )
+                    buf.extend(f"- {p}" for p in changed)
+                sections.append("\n".join(buf))
+
+        if self.active_skills:
+            buf = ["## 已激活的技能"]
+            buf.append("以下技能在上次会话中已激活，其触发条件仍然适用：")
+            buf.extend(f"- {name}" for name in self.active_skills)
+            sections.append("\n".join(buf))
+
+        return "\n\n".join(sections)
+
     async def run_to_completion(
         self,
         task: str,

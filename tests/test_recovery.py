@@ -70,3 +70,24 @@ def test_recovery_skills_budget():
     emitted = out.count("### skill-")
     # 25K / 每个 skill 5K ⇒ 最多 5 个
     assert 1 <= emitted <= 5
+
+
+def test_recovery_state_roundtrip():
+    state = RecoveryState()
+    state.record_file_read("/tmp/a.py", "print('hi')\n")
+    state.record_skill_invocation("planner", "step 1\nstep 2\n")
+
+    restored = RecoveryState.from_dict(state.to_dict())
+
+    assert restored._files["/tmp/a.py"].path == "/tmp/a.py"
+    assert restored._files["/tmp/a.py"].content == "print('hi')\n"
+    assert restored._skills["planner"].name == "planner"
+    assert restored._skills["planner"].body == "step 1\nstep 2\n"
+
+
+def test_recovery_state_from_dict_tolerates_bad_data():
+    state = RecoveryState.from_dict(
+        {"files": {"x": "not-a-dict"}, "skills": None, "unknown": 1}
+    )
+    assert state._files == {}
+    assert state._skills == {}

@@ -633,6 +633,10 @@ async def run_agent_loop(
         apply_tool_result_budget(tool_results, agent.session_dir, exempt_ids)
         conversation.add_tool_results_message(tool_results)
 
+        # 工具结果已入历史，本轮 ReadFile / skill 调用 / 编辑产生的运行时
+        # 心智（已读文件、激活技能、技能快照）已更新，落盘供崩溃恢复。
+        agent.save_runtime_state()
+
         # 非阻塞 memory recall：工具执行完后检查 prefetch 是否就绪
         if (
             agent.memory_recall_task
@@ -840,6 +844,7 @@ async def run_agent_loop_to_completion(
         # 合计超限的情况。进历史前把整批处理完，消息一出生就是终态
         apply_tool_result_budget(tool_results, agent.session_dir, exempt_ids)
         conversation.add_tool_results_message(tool_results)
+        agent.save_runtime_state()
 
         if agent.hook_engine:
             ctx = agent._build_hook_context("turn_end")
