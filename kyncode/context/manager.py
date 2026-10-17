@@ -147,12 +147,12 @@ def persist_tool_result(tool_use_id: str, content: str, session_dir: Path) -> Pa
 
 
 def make_persisted_preview(content: str, file_path: Path) -> str:
-    size_kb = len(content) // 1024
+    total_tokens = estimate_text_tokens(content)
     preview = truncate_text_by_tokens(content, PREVIEW_TOKENS)
-    more = "\n..." if estimate_text_tokens(content) > PREVIEW_TOKENS else ""
+    more = "\n..." if total_tokens > PREVIEW_TOKENS else ""
     return (
         f"<{PERSISTED_TAG}>\n"
-        f"输出太大（{size_kb}KB），完整内容已保存到：\n"
+        f"输出太大（约 {total_tokens} tokens），完整内容已保存到：\n"
         f"{file_path}\n"
         f"\n"
         f"预览（前 {PREVIEW_TOKENS} tokens）：\n"
