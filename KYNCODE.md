@@ -26,7 +26,7 @@ uv run kyncode -p "解释这个项目"                       # 非交互执行�
 uv run kyncode -p "..." --output-format stream-json   # NDJSON 流式事件
 uv run kyncode --remote                               # 远程模式（浏览器 :18888）
 uv run pytest                                         # 全量测试
-uv run ruff check .                                   # 代码检查
+uv run ruff check --select F,I,E4,E7,E9 .             # 代码检查
 ```
 
 ## 目录结构
@@ -53,3 +53,38 @@ kyncode/
 ```
 
 运行时数据统一放在项目根的 `.kyncode/`（日志、记忆、权限规则、技能缓存），已被 `.gitignore` 排除。
+
+## 代码规范
+
+### Python
+
+- 最低版本 3.11。可用现代语法：`X | None`、`list[X]`、`from __future__ import annotations`（全库 138 个文件已统一使用）。`Generator` 等注解写全三参（`Generator[None, None, None]`），单参简写仅 3.13+。
+- dataclass 优先于手写样板；跨模块类型用 `collections.abc`（如 `Mapping`、`Generator`），不用 `typing` 旧别名。
+
+### Lint
+
+- 用 ruff（当前 0.17.x），检查集合固定为 `--select F,I,E4,E7,E9`（未在 pyproject 配置 `[tool.ruff]`，手动传入）。
+- 改完代码先 `uv run ruff check --select F,I,E4,E7,E9 <changed files>`，通过后再跑测试。
+
+### 测试
+
+- pytest + pytest-asyncio，`asyncio_mode = "auto"`（async 测试无需显式 `@pytest.mark.asyncio`）。
+- 全量：`uv run pytest tests/ -q --basetemp=/tmp/kyn_<suffix>`（basetemp 必须用 /tmp 或每次换新名，见「注意事项」）。
+- 每个新行为配对应测试；改阈值/常量时同步更新相关断言。
+
+### 语言策略
+
+- 代码、注释、commit message、工具 description、子 agent frontmatter 的 `description`：英文。
+- KYNCODE.md、子 agent 正文、面向用户的提示词与提醒文本：简体中文。
+
+### 提交
+
+- 英文 Conventional Commits：`feat(scope):` / `fix(scope):` / `refactor(scope):` / `style(scope):`。
+- 只提交已暂存内容，不代 `git add`；执行 `git commit` 前先展示 message 等待确认。
+
+## 注意事项
+
+- **测试 basetemp 不能落在项目目录内**：命令沙箱 shim 会拦截对大量文件的 `rm -rf`，`.tmp_*` 落在项目内还会被 `load_instructions` 向上读到根目录 KYNCODE.md 造成假失败。统一用 `/tmp/kyn_<suffix>` 或每次换新名。
+- **工作区文件可能被外部进程还原**：大改动用单次整文件重写，不要依赖多次增量编辑的中间状态。
+- **代码/配置里的引号、定界符、路径一律用 ASCII 直引号**（`"` / `'`）；仅中文自然语言内容（正文、注释、文档）才用全角标点。
+- 代码与文档中不使用 emoji（除非明确要求）。
