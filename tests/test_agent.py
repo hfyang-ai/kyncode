@@ -397,36 +397,9 @@ async def test_message_splicing():
     assert len(tool_results_msg["content"]) == 2  # 2 个 tool_result
     assert tool_results_msg["content"][0]["tool_use_id"] == "t1"
     assert tool_results_msg["content"][1]["tool_use_id"] == "t2"
-
-
-@pytest.mark.asyncio
-async def test_concurrent_batch_execution():
-    """多个 ReadFile 调用并发执行（属于同一批次）。"""
-    client = MockLLMClient(
-        [
-            [
-                ToolCallComplete("t1", "ReadFile", {"file_path": "KYNCODE.md"}),
-                ToolCallComplete("t2", "ReadFile", {"file_path": "pyproject.toml"}),
-                StreamEnd("end_turn", input_tokens=10, output_tokens=20),
-            ],
-            [
-                TextDelta("Both files read."),
-                StreamEnd("end_turn", input_tokens=30, output_tokens=10),
-            ],
-        ]
-    )
-    registry = create_default_registry()
-    agent = Agent(client, registry, "anthropic", work_dir=".")
-    conv = ConversationManager()
-    conv.add_user_message("Read both")
-
-    events = []
-    async for e in agent.run(conv):
-        events.append(e)
-
+    # 同一批次的多个只读调用都应成功执行。
     c = _collect(events)
     assert len(c["tool_result"]) == 2
-    # 两个都应成功（这些文件在项目根目录下存在）
     assert all(not r.is_error for r in c["tool_result"])
 
 

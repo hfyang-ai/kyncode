@@ -84,12 +84,14 @@ def _checker(mode: PermissionMode = PermissionMode.DEFAULT) -> PermissionChecker
 @pytest.mark.asyncio
 async def test_unknown_tool_short_circuits_in_prepare():
     runtime = ToolRuntime(_registry())
-    tc = ToolCallComplete("t1", "Nope", {})
+    tc = ToolCallComplete("t9", "Nope", {})
 
     result, _ = await _collect(runtime.invoke(tc))
     assert result.result.is_error
     assert "unknown tool" in result.result.output
     assert result.executed is False
+    assert result.tool_id == "t9"
+    assert result.result.error_code == ToolErrorCode.UNKNOWN_TOOL
 
 
 @pytest.mark.asyncio
@@ -197,6 +199,7 @@ async def test_timeout_returns_error():
     assert result.result.is_error
     assert "timed out" in result.result.output
     assert result.executed is True
+    assert result.result.error_code == ToolErrorCode.TIMEOUT
 
 
 @pytest.mark.asyncio
@@ -211,6 +214,7 @@ async def test_exception_wrapped_in_execute():
     assert result.result.is_error
     assert "Tool execution error" in result.result.output
     assert "boom" in result.result.output
+    assert result.result.error_code == ToolErrorCode.EXECUTION_ERROR
 
 
 @pytest.mark.asyncio
@@ -288,17 +292,6 @@ async def test_finalize_preserves_tool_call_id():
 
 
 @pytest.mark.asyncio
-async def test_short_circuit_carries_tool_id_and_error_code():
-    runtime = ToolRuntime(_registry())
-    tc = ToolCallComplete("t9", "Nope", {})
-
-    result, _ = await _collect(runtime.invoke(tc))
-    assert result.tool_id == "t9"
-    assert result.executed is False
-    assert result.result.error_code == ToolErrorCode.UNKNOWN_TOOL
-
-
-@pytest.mark.asyncio
 async def test_output_model_validates_and_projects():
     tool = _StructuredTool('{"name": "x", "count": 3, "extra": "drop", "optional": null}')
     runtime = ToolRuntime(_registry(tool))
@@ -339,45 +332,7 @@ async def test_finalize_redacts_sensitive():
 
 
 @pytest.mark.asyncio
-async def test_timeout_maps_to_stable_error_code():
-    async def slow(_params):
-        await asyncio.sleep(10)
-        return ToolResult(output="never")
-
-    runtime = ToolRuntime(_registry(_FakeTool(slow)), timeout=0.01)
-    tc = ToolCallComplete("t1", "FakeTool", {})
-
-    result, _ = await _collect(runtime.invoke(tc))
-    assert result.result.error_code == ToolErrorCode.TIMEOUT
-
-
-@pytest.mark.asyncio
-async def test_exception_maps_to_execution_error_code():
-    async def boom(_params):
-        raise RuntimeError("boom")
-
-    runtime = ToolRuntime(_registry(_FakeTool(boom)))
-    tc = ToolCallComplete("t1", "FakeTool", {})
-
-    result, _ = await _collect(runtime.invoke(tc))
-    assert result.result.error_code == ToolErrorCode.EXECUTION_ERROR
-
-
-@pytest.mark.asyncio
 async def test_finalize_emits_trace_with_tool_call_id(caplog):
-    runtime = ToolRuntime(_registry(_FakeTool()))
-    tc = ToolCallComplete("call-42", "FakeTool", {"value": 5})
-
-    with caplog.at_level(logging.DEBUG, logger="kyncode.tools.runtime"):
-        await _collect(runtime.invoke(tc))
-
-    assert any("tool_call" in r.message for r in caplog.records)
-    # 结构化 payload 里应带上原始 tool_call_id。
-    assert any("call-42" in r.message for r in caplog.records)
-
-
-@pytest.mark.asyncio
-async def test_trace_includes_agent_id(caplog):
     runtime = ToolRuntime(_registry(_FakeTool()))
     tc = ToolCallComplete("call-42", "FakeTool", {"value": 5})
 
@@ -389,6 +344,8 @@ async def test_trace_includes_agent_id(caplog):
         current_agent_id.reset(token)
 
     trace = next(r for r in caplog.records if "tool_call" in r.message)
+    # 结构化 payload 里应带上原始 tool_call_id 与当前 agent id。
+    assert "call-42" in trace.message
     assert '"agent_id": "agent-abc"' in trace.message
 
 
