@@ -35,6 +35,11 @@ class Message:
     tool_uses: list[ToolUseBlock] = field(default_factory=list)
     tool_results: list[ToolResultBlock] = field(default_factory=list)
     thinking_blocks: list[ThinkingBlock] = field(default_factory=list)
+    # 系统级提醒标记：anthropic 协议把提醒用 <system-reminder> 标签夹在 user 消息里
+    # （Claude 原生识别），openai 协议则序列化成 role="system"。content 里仍保留
+    # 标签文本（token 估算、has_reminder_containing 探测、落盘都走 content），
+    # 此标记只给序列化层路由用。不写盘、不进调试输出。
+    system_reminder: bool = field(default=False, compare=False, repr=False)
     # 这条消息有没有写进会话记录。会话刷盘时按它跳过已写的，不按下标切片：
     # 环境上下文和长期记忆是 insert(0) 插到历史最前面的，一插索引就整体后移，
     # 之前记下的下标会跟着错位，把已经写过的消息再写一遍。
@@ -191,6 +196,7 @@ class ConversationManager:
             Message(
                 role="user",
                 content=f"<system-reminder>\n{content}\n</system-reminder>",
+                system_reminder=True,
             )
         )
 
@@ -248,7 +254,9 @@ class ConversationManager:
             "</system-reminder>"
         )
         pos = 1 if self.env_injected else 0
-        self.history.insert(pos, Message(role="user", content=wrapped))
+        self.history.insert(
+            pos, Message(role="user", content=wrapped, system_reminder=True)
+        )
         self.ltm_injected = True
 
     def replace_history(self, new_messages: list[Message]) -> None:

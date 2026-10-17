@@ -8,6 +8,22 @@ from kyncode.conversation import Message
 # 把 provider 无关的内部消息序列化成各家 API 的请求格式。
 # 这一层属于「适配器」职责，对话层（ConversationManager）只管消息、不懂线上格式。
 
+_SYSTEM_REMINDER_OPEN = "<system-reminder>"
+_SYSTEM_REMINDER_CLOSE = "</system-reminder>"
+
+
+def _strip_system_reminder(content: str) -> str:
+    """剥掉 <system-reminder>...</system-reminder> 包裹，返回纯正文。
+
+    anthropic 协议把系统提醒用 <system-reminder> 标签夹在 user 消息里（Claude 原生
+    识别该标签并给予高指令优先级）；openai 协议没有这个标签语义，改用 role="system"
+    表达同一含义，所以序列化时要剥掉标签、只留正文。
+    """
+    text = content.strip()
+    if text.startswith(_SYSTEM_REMINDER_OPEN) and text.endswith(_SYSTEM_REMINDER_CLOSE):
+        return text[len(_SYSTEM_REMINDER_OPEN) : -len(_SYSTEM_REMINDER_CLOSE)].strip()
+    return content
+
 
 def build_anthropic_messages(messages: list[Message]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
@@ -109,7 +125,12 @@ def build_openai_messages(messages: list[Message]) -> list[dict[str, Any]]:
                         "summary": [{"type": "summary_text", "text": tb.thinking}],
                     }
                 )
-            result.append({"role": m.role, "content": m.content})
+            if m.system_reminder:
+                result.append(
+                    {"role": "system", "content": _strip_system_reminder(m.content)}
+                )
+            else:
+                result.append({"role": m.role, "content": m.content})
     return result
 
 
@@ -160,7 +181,10 @@ def build_chat_completion_messages(messages: list[Message]) -> list[dict[str, An
                     }
                 )
         else:
-            msg = {"role": m.role, "content": m.content}
+            if m.system_reminder:
+                msg = {"role": "system", "content": _strip_system_reminder(m.content)}
+            else:
+                msg = {"role": m.role, "content": m.content}
             if reasoning:
                 msg["reasoning_content"] = reasoning
             result.append(msg)

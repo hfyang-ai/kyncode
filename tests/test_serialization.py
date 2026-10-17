@@ -144,3 +144,57 @@ def test_build_messages_dispatch_by_protocol():
     assert build_messages(msgs, "anthropic") == build_anthropic_messages(msgs)
     assert build_messages(msgs, "openai") == build_openai_messages(msgs)
     assert build_messages(msgs, "openai-compat") == build_chat_completion_messages(msgs)
+
+
+def test_openai_routes_system_reminder_to_system_role():
+    conv = ConversationManager()
+    conv.add_user_message("hello")
+    conv.add_system_reminder("wrap up now")
+
+    msgs = build_openai_messages(conv.get_messages())
+
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["content"] == "hello"
+    system_msgs = [m for m in msgs if m.get("role") == "system"]
+    assert len(system_msgs) == 1
+    # 转成 system role 后标签被剥掉，只留正文
+    assert system_msgs[0]["content"] == "wrap up now"
+    assert "<system-reminder>" not in system_msgs[0]["content"]
+
+
+def test_chat_completion_routes_system_reminder_to_system_role():
+    conv = ConversationManager()
+    conv.add_user_message("hello")
+    conv.add_system_reminder("wrap up now")
+
+    msgs = build_chat_completion_messages(conv.get_messages())
+
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["content"] == "hello"
+    assert msgs[1]["role"] == "system"
+    assert msgs[1]["content"] == "wrap up now"
+    assert "<system-reminder>" not in msgs[1]["content"]
+
+
+def test_openai_routes_long_term_memory_injection_to_system_role():
+    conv = ConversationManager()
+    conv.inject_long_term_memory("project rules", "user prefs")
+
+    msgs = build_openai_messages(conv.get_messages())
+
+    assert msgs[0]["role"] == "system"
+    assert "kyncodeMd" in msgs[0]["content"]
+    assert "project rules" in msgs[0]["content"]
+    assert "<system-reminder>" not in msgs[0]["content"]
+
+
+def test_anthropic_keeps_system_reminder_as_tagged_user_message():
+    conv = ConversationManager()
+    conv.add_system_reminder("wrap up now")
+
+    msgs = build_anthropic_messages(conv.get_messages())
+
+    # anthropic 下仍是 user role + 标签包裹，不转 system role
+    assert msgs[0]["role"] == "user"
+    assert "<system-reminder>" in msgs[0]["content"]
+    assert "wrap up now" in msgs[0]["content"]

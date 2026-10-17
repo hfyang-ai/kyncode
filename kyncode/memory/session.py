@@ -127,9 +127,13 @@ class SessionRecord:
         ]
 
     def to_message(self) -> Message:
+        content = self.content if isinstance(self.content, str) else ""
         return Message(
             role=self.role,
-            content=self.content if isinstance(self.content, str) else "",
+            content=content,
+            # 恢复时按内容前缀探测 system_reminder 标记：旧 JSONL 没有这个字段，
+            # 靠 <system-reminder> 标签识别，保证 resume 后仍能按协议路由。
+            system_reminder=content.lstrip().startswith("<system-reminder>"),
             tool_uses=[
                 ToolUseBlock(
                     tool_use_id=tu.get("tool_use_id", ""),
