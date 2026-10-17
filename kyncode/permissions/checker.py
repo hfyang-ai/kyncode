@@ -12,7 +12,7 @@ from kyncode.permissions.rules import Rule, RuleEngine, evaluate_rules, extract_
 from kyncode.permissions.sandbox import PathSandbox
 from kyncode.tools.base import Tool
 from kyncode.tools.redact import redact_sensitive
-from kyncode.tracing import TRACE_ARGS_LIMIT, truncate
+from kyncode.tracing import TRACE_ARGS_LIMIT, current_agent_id, truncate
 
 log = logging.getLogger(__name__)
 
@@ -70,6 +70,7 @@ class PermissionChecker:
             redact_sensitive(
                 json.dumps(
                     {
+                        "agent_id": current_agent_id.get(),
                         "tool": tool.name,
                         "category": tool.category,
                         "mode": self.mode.value,

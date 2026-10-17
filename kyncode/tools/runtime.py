@@ -32,6 +32,8 @@ from kyncode.tools.redact import redact_sensitive
 from kyncode.tracing import (
     TRACE_ARGS_LIMIT,
     TRACE_OUTPUT_LIMIT,
+    TRACE_TEXT_LIMIT,
+    current_agent_id,
     truncate,
 )
 
@@ -169,6 +171,17 @@ class ToolRuntime:
                 request = self._make_request(prepared)
                 yield request
                 reply = await request.future
+                # 审计：用户对 ask 请求的真实授权动作（allow/deny/allow_always）。
+                # checker 里的 permission_check 只记系统预判「要不要问」，这里记
+                # 「用户最终怎么答」，两者合起来才是完整的授权闭环。
+                pattern = (
+                    self._build_allow_pattern(prepared)
+                    if reply.response is PermissionResponse.ALLOW_ALWAYS
+                    else None
+                )
+                self._log_permission_decision(
+                    tc, reply.response, feedback=reply.feedback, rule_pattern=pattern
+                )
                 if reply.response is PermissionResponse.DENY:
                     yield self._finalize(
                         ToolResult(
@@ -293,19 +306,59 @@ class ToolRuntime:
             future=future,
         )
 
-    def _remember_allow(self, prepared: PreparedCall) -> None:
-        from kyncode.permissions.rules import Rule, extract_content
+    def _build_allow_pattern(self, prepared: PreparedCall) -> str | None:
+        """构造 ALLOW_ALWAYS 落盘规则的匹配模式（只构造，不落盘）。
+
+        与 _remember_allow 共用，让审计日志在落盘前就能拿到「授权了什么」。
+        """
+        from kyncode.permissions.rules import extract_content
 
         if self.permission_checker is None:
-            return
+            return None
         content = extract_content(
             prepared.tool_call.tool_name, prepared.tool_call.arguments
         )
-        pattern = f"{content[:60]}*" if len(content) > 60 else f"{content}*"
+        return f"{content[:60]}*" if len(content) > 60 else f"{content}*"
+
+    def _remember_allow(self, prepared: PreparedCall) -> None:
+        from kyncode.permissions.rules import Rule
+
+        if self.permission_checker is None:
+            return
         rule = Rule(
-            tool_name=prepared.tool_call.tool_name, pattern=pattern, effect="allow"
+            tool_name=prepared.tool_call.tool_name,
+            pattern=self._build_allow_pattern(prepared),
+            effect="allow",
         )
         self.permission_checker.rule_engine.append_local_rule(rule)
+
+    def _log_permission_decision(
+        self,
+        tool_call: ToolCallComplete,
+        response: PermissionResponse,
+        *,
+        feedback: str = "",
+        rule_pattern: str | None = None,
+    ) -> None:
+        """审计一条 HITL 授权结果：用户对 ask 请求的真实回答。
+
+        checker.check 里的 permission_check 记的是系统预判（要不要问），
+        这条记的是用户最终动作——deny / allow / allow_always。allow_always
+        会持久化一条本地规则，rule_pattern 记下授权面扩大的具体内容，让
+        「谁在何时永久放行了什么」可追溯。
+        """
+        payload = {
+            "agent_id": current_agent_id.get(),
+            "tool_call_id": tool_call.tool_id,
+            "tool_name": tool_call.tool_name,
+            "decision": response.value,
+            "feedback": truncate(feedback, TRACE_TEXT_LIMIT) or None,
+            "rule_pattern": rule_pattern,
+        }
+        log.info(
+            "permission_decision %s",
+            redact_sensitive(json.dumps(payload, ensure_ascii=False, default=str)),
+        )
 
     # ---- execute ----
 
@@ -532,6 +585,7 @@ class ToolRuntime:
         result.output 在 _finalize 里已脱敏，这里只再截断；arguments 在此脱敏。
         """
         payload = {
+            "agent_id": current_agent_id.get(),
             "tool_call_id": tool_call.tool_id,
             "tool_name": tool_call.tool_name,
             "category": tool.category if tool is not None else None,

@@ -38,13 +38,14 @@ from typing import Any
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} ")
 
 # 带 JSON 载荷的 trace 事件（消息 = "<事件名> <json>"）
-_JSON_EVENTS = ("llm_response", "tool_call", "permission_check")
+_JSON_EVENTS = ("llm_response", "tool_call", "permission_check", "permission_decision")
 
 # 每个事件的展示颜色（CSS 变量名，见模板里的 :root）
 _EVENT_STYLE: dict[str, str] = {
     "llm_response": "llm",
     "tool_call": "tool",
     "permission_check": "perm",
+    "permission_decision": "perm",
     "http": "http",
     "mcp": "mcp",
     "plain": "plain",

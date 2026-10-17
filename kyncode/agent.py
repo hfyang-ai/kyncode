@@ -65,6 +65,7 @@ from kyncode.tracing import (
     TRACE_ARGS_LIMIT,
     TRACE_TEXT_LIMIT,
     TRACE_THINKING_LIMIT,
+    current_agent_id,
     truncate,
 )
 
@@ -368,8 +369,12 @@ class Agent:
         )
 
     async def run(self, conversation: ConversationManager) -> AsyncIterator[AgentEvent]:
-        async for event in run_agent_loop(self, conversation):
-            yield event
+        token = current_agent_id.set(self.agent_id)
+        try:
+            async for event in run_agent_loop(self, conversation):
+                yield event
+        finally:
+            current_agent_id.reset(token)
 
     def _consume_mailbox(self, conversation: ConversationManager) -> None:
         if not self.team_name or not self._team_manager:

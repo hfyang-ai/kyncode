@@ -27,6 +27,7 @@ from kyncode.tools import ToolRegistry
 from kyncode.tools.base import Tool, ToolCallComplete, ToolResult
 from kyncode.tools.errors import ToolErrorCode
 from kyncode.tools.runtime import ToolRuntime
+from kyncode.tracing import current_agent_id
 
 
 class _Params(BaseModel):
@@ -373,6 +374,66 @@ async def test_finalize_emits_trace_with_tool_call_id(caplog):
     assert any("tool_call" in r.message for r in caplog.records)
     # 结构化 payload 里应带上原始 tool_call_id。
     assert any("call-42" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_trace_includes_agent_id(caplog):
+    runtime = ToolRuntime(_registry(_FakeTool()))
+    tc = ToolCallComplete("call-42", "FakeTool", {"value": 5})
+
+    token = current_agent_id.set("agent-abc")
+    try:
+        with caplog.at_level(logging.DEBUG, logger="kyncode.tools.runtime"):
+            await _collect(runtime.invoke(tc))
+    finally:
+        current_agent_id.reset(token)
+
+    trace = next(r for r in caplog.records if "tool_call" in r.message)
+    assert '"agent_id": "agent-abc"' in trace.message
+
+
+@pytest.mark.asyncio
+async def test_permission_decision_audits_deny(caplog):
+    checker = _checker(PermissionMode.DEFAULT)
+    write_tool = _FakeTool()
+    write_tool.category = "write"
+    runtime = ToolRuntime(_registry(write_tool), permission_checker=checker)
+    tc = ToolCallComplete("call-9", "FakeTool", {})
+
+    with caplog.at_level(logging.DEBUG, logger="kyncode.tools.runtime"):
+        result, requests = await _collect(
+            runtime.invoke(tc, interactive=True),
+            reply=PermissionReply(PermissionResponse.DENY, feedback="换个做法"),
+        )
+
+    assert result.result.is_error
+    assert len(requests) == 1
+    decisions = [r for r in caplog.records if "permission_decision" in r.message]
+    assert len(decisions) == 1
+    assert '"decision": "deny"' in decisions[0].message
+    assert "换个做法" in decisions[0].message
+
+
+@pytest.mark.asyncio
+async def test_permission_decision_audits_allow_always(caplog):
+    checker = _checker(PermissionMode.DEFAULT)
+    write_tool = _FakeTool()
+    write_tool.category = "write"
+    runtime = ToolRuntime(_registry(write_tool), permission_checker=checker)
+    tc = ToolCallComplete("call-10", "FakeTool", {"value": 1})
+
+    with caplog.at_level(logging.DEBUG, logger="kyncode.tools.runtime"):
+        result, requests = await _collect(
+            runtime.invoke(tc, interactive=True),
+            reply=PermissionReply(PermissionResponse.ALLOW_ALWAYS),
+        )
+
+    assert not result.result.is_error
+    assert len(requests) == 1
+    decisions = [r for r in caplog.records if "permission_decision" in r.message]
+    assert len(decisions) == 1
+    assert '"decision": "allow_always"' in decisions[0].message
+    assert '"rule_pattern"' in decisions[0].message
 
 
 # ---- repeat guard：防止同一工具同一参数连续重复调用 ----
