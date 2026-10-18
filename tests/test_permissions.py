@@ -35,7 +35,9 @@ from kyncode.permissions import (
     extract_content,
     mode_decide,
     parse_rule,
+    strip_cd_prefix,
 )
+from kyncode.permissions.dangerous import is_safe_command
 from kyncode.tools import create_default_registry
 from kyncode.tools.base import StreamEnd, StreamEvent, TextDelta, ToolCallComplete
 
@@ -103,6 +105,58 @@ class TestDangerousCommandDetector:
     def test_safe_ls(self) -> None:
         hit, _ = self.detector.detect("ls -la")
         assert not hit
+
+
+class TestIsSafeCommand:
+    """is_safe_command 逐段分析：全只读的复合命令放行，含危险成分的拒绝。"""
+
+    def test_single_read_only(self) -> None:
+        assert is_safe_command("ls -la")
+        assert is_safe_command("grep -rn def tests")
+        assert is_safe_command("sed -n '190,270p' tests/test_agent.py")
+        assert is_safe_command("git log --oneline -8")
+
+    def test_compound_read_only_chain(self) -> None:
+        # 只读命令 + echo 分隔符，逐段都安全 → 放行
+        assert is_safe_command("sed -n '1,80p' f && echo '---TAIL---'")
+        assert is_safe_command("cat tests/x.py && echo '=== marker ==='")
+        assert is_safe_command("git status --short && git log -1 --oneline")
+
+    def test_compound_read_only_pipe(self) -> None:
+        assert is_safe_command("find tests -name '*.py' | sort")
+
+    def test_compound_with_dangerous_segment(self) -> None:
+        # rm 段不安全，整体拒绝
+        assert not is_safe_command("grep x f && rm -rf /")
+        # xargs 不在白名单，整体拒绝
+        assert not is_safe_command("find . | xargs rm")
+
+    def test_compound_with_non_whitelist(self) -> None:
+        assert not is_safe_command("ls && npm test")
+
+    def test_command_substitution(self) -> None:
+        assert not is_safe_command('echo "$(date)"')
+
+    def test_redirection_write(self) -> None:
+        assert not is_safe_command("ls > out.txt")
+
+    def test_operators_inside_quotes_not_split(self) -> None:
+        # 引号内的 | 和 ; 是字面量，不是 shell 操作符
+        assert is_safe_command('grep "a|b" f')
+        assert is_safe_command("sed -n '1,10p;20,30p' f")
+
+    def test_execution_semantics_rejected(self) -> None:
+        assert not is_safe_command("sed -i 's/a/b/' f")
+        assert not is_safe_command("find . -exec rm {} \\;")
+        assert not is_safe_command("awk 'BEGIN{system(\"rm x\")}'")
+
+    def test_background_ampersand_split(self) -> None:
+        # 单个 & 后台执行符也拆分，rm 段不安全
+        assert not is_safe_command("ls & rm -rf /")
+
+    def test_empty(self) -> None:
+        assert not is_safe_command("")
+        assert not is_safe_command("   ")
 
 
 # ===========================================================================
@@ -219,6 +273,43 @@ class TestRuleEngine:
         assert extract_content("Glob", {"pattern": "**/*.py"}) == "**/*.py"
         assert extract_content("Grep", {"pattern": "TODO"}) == "TODO"
         assert extract_content("UnknownTool", {"x": 1}) == ""
+
+    def test_extract_content_strips_cd_prefix(self) -> None:
+        """Bash 的 cd 前缀被剥掉，授权对象聚焦到实际动作。"""
+        assert (
+            extract_content("Bash", {"command": "cd /tmp && grep -n def file.py"})
+            == "grep -n def file.py"
+        )
+        assert extract_content("Bash", {"command": "cd /tmp; ls -la"}) == "ls -la"
+
+    def test_strip_cd_prefix_plain(self) -> None:
+        assert strip_cd_prefix("cd /tmp && ls") == "ls"
+        assert strip_cd_prefix("cd /tmp; ls") == "ls"
+        # cd 后跟多个动作，只剥最外层 cd
+        assert strip_cd_prefix("cd /tmp && ls && pwd") == "ls && pwd"
+
+    def test_strip_cd_prefix_quoted_path(self) -> None:
+        assert strip_cd_prefix('cd "/tmp foo" && ls') == "ls"
+        assert strip_cd_prefix("cd '/tmp bar' && ls") == "ls"
+
+    def test_strip_cd_prefix_special_args(self) -> None:
+        assert strip_cd_prefix("cd .. && git status") == "git status"
+        assert strip_cd_prefix("cd - && ls") == "ls"
+        assert strip_cd_prefix("cd ~ && ls") == "ls"
+
+    def test_strip_cd_prefix_multilayer(self) -> None:
+        assert strip_cd_prefix("cd /a && cd /b && cmd") == "cmd"
+
+    def test_strip_cd_prefix_noop(self) -> None:
+        # 纯 cd 后面没有实际动作，原样保留
+        assert strip_cd_prefix("cd /tmp") == "cd /tmp"
+        # 非 cd 命令不剥
+        assert strip_cd_prefix("ls -la") == "ls -la"
+        assert strip_cd_prefix("git status") == "git status"
+        # 空命令
+        assert strip_cd_prefix("") == ""
+        # 悬空 && 剥完变空，保留原命令，避免空 pattern 退化成 "*"
+        assert strip_cd_prefix("cd /tmp && ") == "cd /tmp && "
 
     def test_evaluate_single_tier(self) -> None:
         tmpdir = Path(tempfile.mkdtemp())
@@ -361,6 +452,76 @@ class TestRuleEngine:
         )
         assert local_path.exists()
         assert engine.evaluate("Bash", "git commit -m test") == "allow"
+
+    def test_append_local_rule_skips_duplicate(self) -> None:
+        """相同规则重复追加时不重复落盘，文件里仍只有一条。"""
+        tmpdir = Path(tempfile.mkdtemp())
+        local_path = tmpdir / ".kyncode" / "permissions.local.yaml"
+        engine = RuleEngine(local_rules_path=local_path)
+        rule = Rule(tool_name="Bash", pattern="git commit *", effect="allow")
+        engine.append_local_rule(rule)
+        engine.append_local_rule(rule)
+
+        loaded = yaml.safe_load(local_path.read_text(encoding="utf-8"))
+        assert len(loaded) == 1
+
+    def test_append_local_rule_skips_covered(self) -> None:
+        """更宽的规则已存在时，窄规则被跳过（superset）。"""
+        tmpdir = Path(tempfile.mkdtemp())
+        local_path = tmpdir / ".kyncode" / "permissions.local.yaml"
+        engine = RuleEngine(local_rules_path=local_path)
+        engine.append_local_rule(Rule(tool_name="Bash", pattern="git *", effect="allow"))
+        engine.append_local_rule(
+            Rule(tool_name="Bash", pattern="git commit *", effect="allow")
+        )
+
+        loaded = yaml.safe_load(local_path.read_text(encoding="utf-8"))
+        assert len(loaded) == 1
+        # 宽规则仍在，窄规则没有写入
+        assert loaded[0]["rule"] == "Bash(git *)"
+
+    def test_append_local_rule_keeps_distinct(self) -> None:
+        """互不覆盖的规则都应保留，去重不误伤。"""
+        tmpdir = Path(tempfile.mkdtemp())
+        local_path = tmpdir / ".kyncode" / "permissions.local.yaml"
+        engine = RuleEngine(local_rules_path=local_path)
+        engine.append_local_rule(Rule(tool_name="Bash", pattern="git *", effect="allow"))
+        engine.append_local_rule(Rule(tool_name="Bash", pattern="npm *", effect="allow"))
+
+        loaded = yaml.safe_load(local_path.read_text(encoding="utf-8"))
+        assert len(loaded) == 2
+
+    def test_append_local_rule_logs_skip(self, caplog) -> None:
+        """被覆盖跳过时打一条结构化审计日志。"""
+        import logging
+
+        tmpdir = Path(tempfile.mkdtemp())
+        local_path = tmpdir / ".kyncode" / "permissions.local.yaml"
+        engine = RuleEngine(local_rules_path=local_path)
+        engine.append_local_rule(Rule(tool_name="Bash", pattern="git *", effect="allow"))
+        with caplog.at_level(logging.INFO, logger="kyncode.permissions.rules"):
+            engine.append_local_rule(
+                Rule(tool_name="Bash", pattern="git status *", effect="allow")
+            )
+        skips = [
+            r for r in caplog.records if r.getMessage().startswith("local_rule_skip ")
+        ]
+        assert len(skips) == 1
+        assert '"reason": "superset"' in skips[0].getMessage()
+
+    def test_pattern_covers(self) -> None:
+        from kyncode.permissions.rules import _pattern_covers
+
+        # 宽覆盖窄、相同也覆盖（前缀包含）
+        assert _pattern_covers("git *", "git commit *")
+        assert _pattern_covers("git *", "git *")
+        # 窄不覆盖宽、互不包含不覆盖
+        assert not _pattern_covers("git commit *", "git *")
+        assert not _pattern_covers("git *", "npm *")
+        # 万能 * 覆盖一切
+        assert _pattern_covers("*", "anything at all *")
+        # 含元字符的 pattern 保守不判定（避免误删）
+        assert not _pattern_covers("file?.txt*", "file1.txt*")
 
 
 # ===========================================================================

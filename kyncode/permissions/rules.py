@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import re
 from dataclasses import dataclass
 from fnmatch import fnmatch
@@ -7,6 +9,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
+
+log = logging.getLogger(__name__)
 
 Effect = Literal["allow", "deny", "ask"]
 
@@ -22,6 +26,33 @@ _CONTENT_FIELDS: dict[str, str] = {
     "WebFetch": "url",
     "WebSearch": "query",
 }
+
+# 匹配命令开头的 `cd <path> && ` / `cd <path>; ` 前缀（可多层）。
+# 路径可能是裸路径、单/双引号包裹的路径，或 - / ~ / .. 这类 cd 特殊参数。
+# 只有 cd 后面跟了 && 或 ;（即后面还有实际动作）才算「可剥的前缀」——
+# 纯 `cd <path>` 后面没有动作，不匹配，原样保留。
+_CD_PREFIX_RE = re.compile(
+    r'^\s*cd\s+(?:"[^"]*"|\'[^\']*\'|[^\s;&|]+)\s*(?:&&|;)\s*'
+)
+
+
+def strip_cd_prefix(command: str) -> str:
+    """剥掉命令开头的 ``cd <path> && `` / ``cd <path>; `` 前缀，支持多层。
+
+    cd 在每次 Bash 调用里都跑在独立子进程中，只改变该子进程自己的工作目录，
+    不影响宿主进程、也不影响下一次调用，是零副作用的局部动作。它不该进入
+    授权匹配对象——否则 LLM 习惯性写 ``cd /path && cmd`` 时，同一条实际动作
+    会因 cd 前缀不同而反复触发询问。剥掉后授权聚焦到 cd 之后真正执行的命令。
+    """
+    while True:
+        stripped = _CD_PREFIX_RE.sub("", command, count=1)
+        if stripped == command:
+            return stripped
+        if not stripped:
+            # 剥完变空（如 "cd /tmp && " 这类悬空命令），保留剥之前的状态，
+            # 避免空 content 在落盘时退化成 "*" 而放行一切。
+            return command
+        command = stripped
 
 
 @dataclass(frozen=True)
@@ -56,7 +87,57 @@ def extract_content(tool_name: str, arguments: dict[str, Any]) -> str:
     field = _CONTENT_FIELDS.get(tool_name)
     if field is None:
         return ""
-    return str(arguments.get(field, ""))
+    content = str(arguments.get(field, ""))
+    if tool_name == "Bash":
+        return strip_cd_prefix(content)
+    return content
+
+
+_GLOB_META = ("*", "?", "[", "]")
+
+
+def _suffix_wildcard_prefix(pattern: str) -> str | None:
+    """pattern 若是「字面量 + 末尾通配」形式（literal*），返回 literal。
+
+    literal 部分不含任何 glob 元字符（* ? [ ]）时，才能用前缀包含做精确覆盖
+    判定；含元字符时返回 None，调用方应保守地不做覆盖判定。
+    """
+    if not pattern.endswith("*"):
+        return None
+    literal = pattern[:-1]
+    if any(ch in literal for ch in _GLOB_META):
+        return None
+    return literal
+
+
+def _pattern_covers(wide: str, narrow: str) -> bool:
+    """wide 是否覆盖 narrow —— 任何 narrow 能匹配的字符串 wide 也能匹配。
+
+    只对「字面量 + 末尾 *」形式的 pattern 做精确判定：wide = la*、narrow = lb*，
+    当 la 是 lb 的前缀时 wide 覆盖 narrow。其他更复杂的 glob（含 ?/[ ]/中间 *）
+    保守返回 False，避免误删。
+    """
+    w = _suffix_wildcard_prefix(wide)
+    n = _suffix_wildcard_prefix(narrow)
+    if w is None or n is None:
+        return False
+    return n.startswith(w)
+
+
+def _redundancy(rule: Rule, existing: list[Rule]) -> str | None:
+    """判断 rule 相对 existing 是否冗余，返回原因；不冗余返回 None。
+
+    - "duplicate"：与已有规则完全相同（tool_name + pattern + effect）
+    - "superset"：被已有同 effect 规则覆盖（更宽规则已放行/拒绝同一动作面）
+    """
+    for e in existing:
+        if e.tool_name != rule.tool_name or e.effect != rule.effect:
+            continue
+        if e.pattern == rule.pattern:
+            return "duplicate"
+        if _pattern_covers(e.pattern, rule.pattern):
+            return "superset"
+    return None
 
 
 def _load_rules_file(path: Path) -> list[Rule]:
@@ -146,6 +227,25 @@ class RuleEngine:
             return
         self._local_path.parent.mkdir(parents=True, exist_ok=True)
         existing = _load_rules_file(self._local_path)
+
+        reason = _redundancy(rule, existing)
+        if reason is not None:
+            # 去重：相同规则不重复写，被已有更宽规则覆盖的也跳过。
+            # 审计日志记下这次授权动作被归并，落盘文件保持不变。
+            log.info(
+                "local_rule_skip %s",
+                json.dumps(
+                    {
+                        "tool": rule.tool_name,
+                        "pattern": rule.pattern,
+                        "effect": rule.effect,
+                        "reason": reason,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            return
+
         existing.append(rule)
         entries = [
             {"rule": f"{r.tool_name}({r.pattern})", "effect": r.effect}
@@ -153,6 +253,18 @@ class RuleEngine:
         ]
         self._local_path.write_text(
             yaml.dump(entries, allow_unicode=True), encoding="utf-8"
+        )
+        log.info(
+            "local_rule_add %s",
+            json.dumps(
+                {
+                    "tool": rule.tool_name,
+                    "pattern": rule.pattern,
+                    "effect": rule.effect,
+                    "total": len(existing),
+                },
+                ensure_ascii=False,
+            ),
         )
 
 

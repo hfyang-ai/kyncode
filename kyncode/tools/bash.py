@@ -131,8 +131,9 @@ class Bash(Tool):
 
         ls、cat、git status 这类跟 ReadFile 一样不动外部状态，没有互相干扰的余地；
         rm、mv、npm install 一旦跟别人并发，执行顺序就不再是模型给出的那个顺序。
-        判定复用权限层那份安全命令白名单，那里已经把重定向、管道、命令串联和命令替换
-        都排除掉了，一条命令能过那个判定就说明它确实只读。
+        判定复用权限层的 is_safe_command：它会按顶层操作符逐段分析，只有每一段都
+        是只读白名单命令（且不含重定向写 / 命令替换 / 执行语义）才判安全，因此
+        纯只读的管道和 && 串联也能安全并发，含危险段的复合命令仍被排除。
         """
         from kyncode.permissions.dangerous import is_safe_command
 

@@ -161,17 +161,106 @@ def _has_execution_semantics(command: str) -> bool:
     )
 
 
+# 命令替换 / 重定向：这些会写文件或注入执行，任何位置出现都拒绝，不参与拆分。
+# 注意这里刻意不列 <（输入重定向）：`cat < f` 这类只读命令历史上一直接放行，
+# 而 `<` 后面的命令名会由 _is_safe_single_command 决定（`sh < script` 因 sh 不在
+# 白名单而被拒）。
+_UNSPLITTABLE_OPERATORS = (">", "$(", "`")
+
+
+def _split_compound(command: str) -> list[str]:
+    """按顶层（非引号内、非转义）的 && / || / ; / | / & 拆分子命令。
+
+    引号与反斜杠转义内的操作符不拆——`grep "a|b"` 的 `|` 是正则、`sed '1,10p;20p'`
+    的 `;` 是地址分隔，都不是 shell 操作符。解析偏保守：遇到未闭合引号时把剩余
+    内容当作一整段，宁可少拆也不误拆，避免把一个含引号字面量的命令错拆后误放行。
+    """
+    segments: list[str] = []
+    buf: list[str] = []
+    i = 0
+    n = len(command)
+    while i < n:
+        ch = command[i]
+        if ch == "\\":
+            # 转义：反斜杠 + 下一个字符都原样保留，不把下一个字符当操作符
+            buf.append(ch)
+            if i + 1 < n:
+                buf.append(command[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+        if ch == "'":
+            j = command.find("'", i + 1)
+            if j == -1:
+                buf.append(command[i:])
+                break
+            buf.append(command[i : j + 1])
+            i = j + 1
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n:
+                if command[j] == "\\":
+                    j += 2
+                    continue
+                if command[j] == '"':
+                    break
+                j += 1
+            if j >= n:
+                buf.append(command[i:])
+                break
+            buf.append(command[i : j + 1])
+            i = j + 1
+            continue
+        # 顶层操作符：&& 和 || 优先于单个 & / |
+        if ch == "&" and i + 1 < n and command[i + 1] == "&":
+            segments.append("".join(buf).strip())
+            buf.clear()
+            i += 2
+            continue
+        if ch == "|" and i + 1 < n and command[i + 1] == "|":
+            segments.append("".join(buf).strip())
+            buf.clear()
+            i += 2
+            continue
+        if ch in (";", "|", "&"):
+            segments.append("".join(buf).strip())
+            buf.clear()
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    segments.append("".join(buf).strip())
+    return [s for s in segments if s]
+
+
+def _is_safe_single_command(command: str) -> bool:
+    """单条命令（不含顶层操作符）是否在只读白名单内。"""
+    c = command.strip()
+    if not c:
+        return False
+    for safe in _SAFE_COMMANDS:
+        if c == safe or c.startswith(safe + " "):
+            return not _has_execution_semantics(c)
+    return False
+
+
 def is_safe_command(command: str) -> bool:
     trimmed = command.strip()
     if not trimmed:
         return False
-    for ch in ("|", ";", "&&", ">", "$(", "`"):
+    # 命令替换 / 重定向：写文件或注入执行，任何位置出现都拒绝，不参与拆分。
+    for ch in _UNSPLITTABLE_OPERATORS:
         if ch in trimmed:
             return False
-    for safe in _SAFE_COMMANDS:
-        if trimmed == safe or trimmed.startswith(safe + " "):
-            return not _has_execution_semantics(trimmed)
-    return False
+    # 按顶层 && / || / ; / | / & 拆分，每一段都必须是只读单命令。
+    # 逐段独立过白名单（含 _has_execution_semantics），因此 `grep x f && rm -rf /`
+    # 会因 rm 段不安全而整体拒绝——安全边界不因拆分而松动。
+    for segment in _split_compound(trimmed):
+        if not _is_safe_single_command(segment):
+            return False
+    return True
 
 
 class DangerousCommandDetector:

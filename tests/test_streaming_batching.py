@@ -166,7 +166,18 @@ def test_bash_readonly_command_is_concurrency_safe():
     from kyncode.tools.bash import Bash
 
     bash = Bash()
-    for cmd in ["ls", "ls -la", "cat a.txt", "git status", "wc -l f", "pwd"]:
+    for cmd in [
+        "ls",
+        "ls -la",
+        "cat a.txt",
+        "git status",
+        "wc -l f",
+        "pwd",
+        # 纯只读的复合命令（管道 / && 串联）逐段判安全，也可并发
+        "ls | wc -l",
+        "cat a.txt && echo '---'",
+        "git status && git log -1 --oneline",
+    ]:
         assert bash.is_concurrency_safe({"command": cmd}), cmd
 
 
@@ -181,7 +192,6 @@ def test_bash_mutating_command_is_not_concurrency_safe():
         "npm install",
         "git commit -m x",
         "echo hi > f",
-        "ls | wc -l",
         "ls; rm x",
         "ls && rm x",
         "echo $(rm x)",
