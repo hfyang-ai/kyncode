@@ -132,12 +132,14 @@ async def _run_prompt(
 ) -> None:
     from kyncode.agent import (
         Agent,
-        CompactNotification,
-        ErrorEvent,
-        LoopComplete,
         PermissionReply,
         PermissionRequest,
         PermissionResponse,
+    )
+    from kyncode.agent_loop import (
+        CompactNotification,
+        ErrorEvent,
+        LoopComplete,
         RetryEvent,
         StreamText,
         ThinkingText,

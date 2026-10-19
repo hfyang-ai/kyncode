@@ -538,7 +538,7 @@ class TestStreamUsageCacheFields:
     def test_collector_propagates_cache_fields_into_response(self) -> None:
         import asyncio
 
-        from kyncode.agent import StreamCollector
+        from kyncode.agent_loop import StreamCollector
         from kyncode.tools.base import StreamEnd
 
         async def _stream():

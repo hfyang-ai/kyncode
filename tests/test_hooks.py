@@ -548,7 +548,8 @@ class TestAgentHookIntegration:
     @pytest.mark.asyncio
     @pytest.mark.skipif(os.name == "nt", reason="rm 命令在 Windows 上不可用")
     async def test_pre_tool_use_reject_skips_tool(self):
-        from kyncode.agent import Agent, ToolResultEvent
+        from kyncode.agent import Agent
+        from kyncode.agent_loop import ToolResultEvent
         from kyncode.client import LLMClient
         from kyncode.conversation import ConversationManager
         from kyncode.tools import create_default_registry

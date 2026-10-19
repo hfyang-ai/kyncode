@@ -15,20 +15,7 @@ from kyncode.agent_loop import (
     ErrorEvent,
     HookEvent,
     LLMResponse,
-    LoopComplete,  # noqa: F401 — 从 agent_loop re-export，供 app/remote/tests 从 kyncode.agent 导入
-    RetryEvent,  # noqa: F401 — 同上
-    StreamCollector,  # noqa: F401 — 同上
-    StreamingExecutor,  # noqa: F401 — 同上
-    StreamText,  # noqa: F401 — 同上
-    ThinkingBlock,  # noqa: F401 — 同上
-    ThinkingText,  # noqa: F401 — 同上
-    ToolBatch,  # noqa: F401 — 同上
-    ToolResultEvent,  # noqa: F401 — 同上
-    ToolUseEvent,  # noqa: F401 — 同上
-    TurnComplete,  # noqa: F401 — 同上
-    UsageEvent,  # noqa: F401 — 同上
-    _ToolExecResult,
-    partition_tool_calls,  # noqa: F401 — 同上
+    ToolExecResult,
     run_agent_loop,
     run_agent_loop_to_completion,
 )
@@ -72,8 +59,8 @@ from kyncode.tracing import (
 log = logging.getLogger(__name__)
 
 # 事件类型 / LLM 收集器 / 工具批量执行器 / 循环常量，以及 run 的主循环编排，
-# 都已抽到 kyncode.agent_loop。这里通过顶部 import 把它们 re-export 出去，
-# 保持 app/remote/tests 从 kyncode.agent 导入这些符号的向后兼容。
+# 都定义在 kyncode.agent_loop。这里只导入 Agent 内部真正用到的几个符号，
+# 事件类与 loop 函数由调用方（app/remote/tests）直接从 agent_loop 导入。
 
 
 class Agent:
@@ -133,7 +120,7 @@ class Agent:
         if memory_manager is not None:
             from kyncode.memory.consolidation import MemoryConsolidator
 
-            self._consolidator = MemoryConsolidator(work_dir)
+            self._consolidator = MemoryConsolidator(work_dir, sub_agent_factory=Agent)
         self.session_id: str = ""
         self.active_skills: dict[str, str] = {}
         self._skill_catalog: str = ""
@@ -393,9 +380,7 @@ class Agent:
         except Exception as e:
             log.debug("Mailbox consumption failed: %s", e)
 
-    async def _execute_single_tool_direct(
-        self, tc: ToolCallComplete
-    ) -> _ToolExecResult:
+    async def _execute_single_tool_direct(self, tc: ToolCallComplete) -> ToolExecResult:
         invocation: ToolInvocation | None = None
         async for item in self.tool_runtime.invoke(tc, interactive=False):
             invocation = item
@@ -403,7 +388,7 @@ class Agent:
         if invocation.executed:
             self._record_recent_tool(tc.tool_name)
             self._snapshot_for_recovery(tc, invocation.result)
-        return _ToolExecResult(
+        return ToolExecResult(
             tool_id=tc.tool_id,
             tool_name=tc.tool_name,
             result=invocation.result,

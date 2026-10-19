@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -33,10 +34,12 @@ class MemoryConsolidator:
         self,
         work_dir: str,
         *,
+        sub_agent_factory: Callable[..., Any],
         min_hours: int = DEFAULT_MIN_HOURS,
         min_sessions: int = DEFAULT_MIN_SESSIONS,
     ) -> None:
         self._work_dir = work_dir
+        self._sub_agent_factory = sub_agent_factory
         self._mem_dir = os.path.join(work_dir, ".kyncode", "memory")
         self._user_mem_dir = os.path.join(Path.home(), ".kyncode", "memory")
         self._min_hours = min_hours
@@ -107,7 +110,6 @@ class MemoryConsolidator:
         protocol: str,
         session_ids: list[str],
     ) -> None:
-        from kyncode.agent import Agent
         from kyncode.conversation import ConversationManager
         from kyncode.permissions import (
             DangerousCommandDetector,
@@ -155,7 +157,7 @@ class MemoryConsolidator:
         conv = ConversationManager()
         conv.add_user_message(prompt)
 
-        sub_agent = Agent(
+        sub_agent = self._sub_agent_factory(
             client=client,
             registry=registry,
             permission_checker=checker,

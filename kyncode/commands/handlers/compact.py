@@ -13,7 +13,7 @@ async def handle_compact(ctx: CommandContext) -> None:
         ctx.ui.add_system_message(f"当前 token 数 {input_tokens:,}，无需压缩")
         return
 
-    from kyncode.agent import CompactNotification, ErrorEvent
+    from kyncode.agent_loop import CompactNotification, ErrorEvent
 
     result = await ctx.agent.manual_compact(ctx.conversation)
     if isinstance(result, CompactNotification):

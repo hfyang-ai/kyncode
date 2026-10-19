@@ -14,7 +14,7 @@ import asyncio
 import pytest
 from pydantic import BaseModel
 
-from kyncode.agent import StreamingExecutor, _ToolExecResult
+from kyncode.agent_loop import StreamingExecutor, ToolExecResult
 from kyncode.tools import ToolRegistry
 from kyncode.tools.base import Tool, ToolResult
 
@@ -58,11 +58,11 @@ def _registry() -> ToolRegistry:
 def _runner(log: list[str], hold: float = 0.02):
     """记录每个工具的进入和离开，用来判断有没有重叠执行。"""
 
-    async def run_one(tc) -> _ToolExecResult:
+    async def run_one(tc) -> ToolExecResult:
         log.append(f"enter:{tc.tool_id}")
         await asyncio.sleep(hold)
         log.append(f"exit:{tc.tool_id}")
-        return _ToolExecResult(
+        return ToolExecResult(
             tool_id=tc.tool_id,
             tool_name=tc.tool_name,
             result=ToolResult(output=tc.tool_id),
@@ -137,7 +137,7 @@ async def test_failing_tool_keeps_its_tool_id():
     async def boom(tc):
         if tc.tool_id == "b":
             raise RuntimeError("炸了")
-        return _ToolExecResult(
+        return ToolExecResult(
             tool_id=tc.tool_id,
             tool_name=tc.tool_name,
             result=ToolResult(output="ok"),
@@ -220,7 +220,7 @@ def test_default_predicate_follows_category():
 @pytest.mark.asyncio
 async def test_readonly_bash_batches_with_read_tools():
     """只读的 Bash 要能跟 ReadFile 归到同一个并发批，这是这次改动的目的。"""
-    from kyncode.agent import partition_tool_calls
+    from kyncode.agent_loop import partition_tool_calls
     from kyncode.tools.bash import Bash
 
     reg = _registry()
@@ -244,7 +244,7 @@ async def test_readonly_bash_batches_with_read_tools():
 @pytest.mark.asyncio
 async def test_mutating_bash_breaks_the_batch():
     """会改东西的 Bash 必须把批次断开，前后各自成批。"""
-    from kyncode.agent import partition_tool_calls
+    from kyncode.agent_loop import partition_tool_calls
     from kyncode.tools.bash import Bash
 
     reg = _registry()

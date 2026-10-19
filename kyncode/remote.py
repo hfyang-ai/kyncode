@@ -21,13 +21,15 @@ from websockets.http11 import Request, Response
 
 from kyncode.agent import (
     Agent,
+    PermissionReply,
+    PermissionRequest,
+    PermissionResponse,
+)
+from kyncode.agent_loop import (
     CompactNotification,
     ErrorEvent,
     HookEvent,
     LoopComplete,
-    PermissionReply,
-    PermissionRequest,
-    PermissionResponse,
     RetryEvent,
     StreamText,
     ThinkingText,

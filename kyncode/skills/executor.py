@@ -53,7 +53,7 @@ class SkillExecutor:
         from kyncode.agent import (
             Agent as AgentClass,
         )
-        from kyncode.agent import (
+        from kyncode.agent_loop import (
             ErrorEvent,
             LoopComplete,
             StreamText,

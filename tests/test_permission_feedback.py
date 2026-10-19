@@ -17,8 +17,8 @@ from kyncode.agent import (
     PermissionReply,
     PermissionRequest,
     PermissionResponse,
-    ToolResultEvent,
 )
+from kyncode.agent_loop import ToolResultEvent
 from kyncode.client import LLMClient
 from kyncode.config import ProviderConfig
 from kyncode.conversation import ConversationManager

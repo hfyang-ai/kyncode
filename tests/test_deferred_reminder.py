@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from kyncode.agent import DEFERRED_REMINDER_MARKER, Agent
+from kyncode.agent import Agent
+from kyncode.agent_loop import DEFERRED_REMINDER_MARKER
 from kyncode.conversation import ConversationManager
 from kyncode.tools import ToolRegistry
 from kyncode.tools.base import Tool

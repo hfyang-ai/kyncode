@@ -12,11 +12,13 @@ import yaml
 
 from kyncode.agent import (
     Agent,
-    ErrorEvent,
-    LoopComplete,
     PermissionReply,
     PermissionRequest,
     PermissionResponse,
+)
+from kyncode.agent_loop import (
+    ErrorEvent,
+    LoopComplete,
     StreamText,
     ToolResultEvent,
     ToolUseEvent,

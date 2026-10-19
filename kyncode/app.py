@@ -19,13 +19,12 @@ from textual.widgets import Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
 from kyncode import crashlog
-from kyncode.agent import (
-    Agent,
+from kyncode.agent import Agent, PermissionRequest
+from kyncode.agent_loop import (
     CompactNotification,
     ErrorEvent,
     HookEvent,
     LoopComplete,
-    PermissionRequest,
     RetryEvent,
     StreamText,
     ThinkingText,

@@ -245,7 +245,7 @@ def partition_tool_calls(
 
 
 @dataclass
-class _ToolExecResult:
+class ToolExecResult:
     tool_id: str
     tool_name: str
     result: ToolResult
@@ -274,12 +274,12 @@ class StreamingExecutor:
         self._calls = []
 
     @staticmethod
-    def _error_result(tc: ToolCallComplete, exc: BaseException) -> _ToolExecResult:
+    def _error_result(tc: ToolCallComplete, exc: BaseException) -> ToolExecResult:
         """把异常收成一条错误结果，tool_id 必须带上。
 
         缺了 tool_id 这条结果就配不上对应的 tool_use，下一轮请求会被 API 直接拒掉。
         """
-        return _ToolExecResult(
+        return ToolExecResult(
             tool_id=tc.tool_id,
             tool_name=tc.tool_name,
             result=ToolResult(output=f"Tool execution error: {exc}", is_error=True),
@@ -290,7 +290,7 @@ class StreamingExecutor:
         self,
         registry: ToolRegistry,
         run_one: Callable[[ToolCallComplete], Any],
-    ) -> list[_ToolExecResult]:
+    ) -> list[ToolExecResult]:
         """按批次执行收集到的调用，只读批并发，写和命令批串行。
 
         批次本身有序、批内也有序，所以按批拼接出来的结果顺序就是模型给出的顺序。
@@ -298,7 +298,7 @@ class StreamingExecutor:
         if not self._calls:
             return []
 
-        out: list[_ToolExecResult] = []
+        out: list[ToolExecResult] = []
         for batch in partition_tool_calls(self._calls, registry):
             if batch.concurrent and len(batch.calls) > 1:
                 gathered = await asyncio.gather(

@@ -184,7 +184,7 @@ def test_do_consolidation_builds_subagent(monkeypatch):
         mem_dir = os.path.join(work_dir, ".kyncode", "memory")
         setup_test_memories(mem_dir)
 
-        consolidator = MemoryConsolidator(work_dir)
+        consolidator = MemoryConsolidator(work_dir, sub_agent_factory=Agent)
         asyncio.run(
             consolidator._do_consolidation(
                 client=object(),
@@ -217,7 +217,7 @@ def test_do_consolidation_subagent_inherits_rules(monkeypatch):
         rules_file = Path(work_dir) / ".kyncode" / "permissions.yaml"
         rules_file.write_text('- rule: "Bash(git *)"\n  effect: deny\n')
 
-        consolidator = MemoryConsolidator(work_dir)
+        consolidator = MemoryConsolidator(work_dir, sub_agent_factory=Agent)
         asyncio.run(
             consolidator._do_consolidation(
                 client=object(),
@@ -250,7 +250,7 @@ def test_do_consolidation_subagent_opens_user_memory_dir(monkeypatch):
         mem_dir = os.path.join(work_dir, ".kyncode", "memory")
         setup_test_memories(mem_dir)
 
-        consolidator = MemoryConsolidator(work_dir)
+        consolidator = MemoryConsolidator(work_dir, sub_agent_factory=Agent)
         # 测试环境把 HOME 指到了临时目录里，而沙箱默认放行临时目录，
         # 取一个明确落在临时目录之外的路径，才能检验放开的确实是用户级记忆目录这一条
         fake_home = Path(os.path.abspath(os.sep)) / "fake-user-home-for-kyncode-test"
