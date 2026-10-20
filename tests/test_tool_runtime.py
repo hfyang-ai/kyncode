@@ -224,7 +224,7 @@ async def test_retry_only_for_read_only_tools():
     async def flaky(_params):
         calls.append(1)
         if len(calls) == 1:
-            raise RuntimeError("transient")
+            raise ConnectionError("transient")
         return ToolResult(output="recovered")
 
     read_tool = _FakeTool(flaky)
@@ -235,6 +235,24 @@ async def test_retry_only_for_read_only_tools():
     assert not result.result.is_error
     assert result.result.output == "recovered"
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_read_only_tool_logic_error_not_retried():
+    # 只读工具的逻辑错误（非可重试错误）不应重试：错误分类与只读守卫按 AND 组合。
+    calls: list[int] = []
+
+    async def flaky(_params):
+        calls.append(1)
+        raise RuntimeError("bug")
+
+    read_tool = _FakeTool(flaky)
+    runtime = ToolRuntime(_registry(read_tool), max_retries=2)
+    tc = ToolCallComplete("t1", "FakeTool", {})
+
+    result, _ = await _collect(runtime.invoke(tc))
+    assert result.result.is_error
+    assert len(calls) == 1  # 逻辑错误立即失败，不重试
 
 
 @pytest.mark.asyncio

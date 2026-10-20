@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import random
 import threading
 import time
 from dataclasses import dataclass
@@ -10,12 +9,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from kyncode.retry import BackoffConfig, retry_sync
+
 # 等待文件锁的总时限（秒）。到点抛出异常交给调用方处理，不能悄悄把消息扔掉。
 LOCK_ACQUIRE_TIMEOUT = 5.0
 # 超过这个时长的锁文件视为持有者已经崩溃，可以强行接管。
 STALE_LOCK_AGE = 10.0
-# 退避上限，避免高并发下越退越久。
-MAX_LOCK_BACKOFF = 0.08
 
 
 @dataclass
@@ -92,32 +91,24 @@ class Mailbox:
         lock_file = self._lock_path(agent_id)
 
         with self._mu:
-            # 抢文件锁：退避时间指数增长并带抖动，避免多个进程醒在同一时刻反复对撞。
-            # 总时限内抢不到就抛出异常，让调用方知道这条消息没写进去。
-            deadline = time.monotonic() + LOCK_ACQUIRE_TIMEOUT
-            backoff = 0.005
-            while True:
-                try:
-                    fd = os.open(
-                        str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644
-                    )
-                    os.close(fd)
-                    break
-                except FileExistsError:
-                    # 锁被别人持有，先看它是不是已经陈旧到可以接管
-                    try:
-                        info = lock_file.stat()
-                        if time.time() - info.st_mtime > STALE_LOCK_AGE:
-                            lock_file.unlink(missing_ok=True)
-                            continue
-                    except OSError:
-                        pass
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError(
-                            f"mailbox {agent_id}: 等待文件锁超过 {LOCK_ACQUIRE_TIMEOUT}s，消息未写入"
-                        )
-                    time.sleep(backoff + random.uniform(0, backoff))
-                    backoff = min(backoff * 2, MAX_LOCK_BACKOFF)
+            # 抢文件锁：通用退避重试（full jitter + 总 deadline 5s）。stale 接管
+            # 是锁语义（非退避语义），保留在 _acquire_lock 内层循环里。
+            try:
+                retry_sync(
+                    lambda: self._acquire_lock(lock_file),
+                    config=BackoffConfig(
+                        base=0.005,
+                        cap=0.08,
+                        max_retries=None,
+                        deadline=LOCK_ACQUIRE_TIMEOUT,
+                    ),
+                    retryable=lambda exc: isinstance(exc, FileExistsError),
+                    scope="mailbox_lock",
+                )
+            except FileExistsError:
+                raise TimeoutError(
+                    f"mailbox {agent_id}: 等待文件锁超过 {LOCK_ACQUIRE_TIMEOUT}s，消息未写入"
+                )
 
             try:
                 messages = self._read_inbox(agent_id)
@@ -125,6 +116,26 @@ class Mailbox:
                 self._write_inbox(agent_id, messages)
             finally:
                 lock_file.unlink(missing_ok=True)
+
+    def _acquire_lock(self, lock_file: Path) -> None:
+        """原子创建锁文件；stale 时强制接管（立即重试），否则抛 FileExistsError 交给退避层。"""
+        while True:
+            try:
+                fd = os.open(
+                    str(lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644
+                )
+                os.close(fd)
+                return
+            except FileExistsError:
+                # 锁被别人持有，先看它是不是已经陈旧到可以接管
+                try:
+                    info = lock_file.stat()
+                    if time.time() - info.st_mtime > STALE_LOCK_AGE:
+                        lock_file.unlink(missing_ok=True)
+                        continue
+                except OSError:
+                    pass
+                raise
 
     # ── inbox I/O ────────────────────────────────────────────────
 

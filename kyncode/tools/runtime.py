@@ -16,6 +16,7 @@ from kyncode.permissions.approval import (
     PermissionRequest,
     PermissionResponse,
 )
+from kyncode.retry import BackoffConfig, retry_async
 from kyncode.tools import ToolRegistry
 from kyncode.tools.base import Tool, ToolCallComplete, ToolResult
 from kyncode.tools.errors import ToolErrorCode
@@ -363,29 +364,27 @@ class ToolRuntime:
     # ---- execute ----
 
     async def _execute(self, prepared: PreparedCall) -> _Execution:
-        attempts = self.max_retries + 1
-        last: _Execution | None = None
-        for attempt in range(attempts):
-            try:
-                if self.timeout is not None:
-                    result = await asyncio.wait_for(
-                        prepared.tool.execute(prepared.params), timeout=self.timeout
-                    )
-                else:
-                    result = await prepared.tool.execute(prepared.params)
-                return _Execution(result=result)
-            except TimeoutError as e:
-                last = _Execution(exception=e, error_code=ToolErrorCode.TIMEOUT)
-            except Exception as e:  # noqa: BLE001 — 工具异常收成结果，不打断循环
-                last = _Execution(exception=e, error_code=ToolErrorCode.EXECUTION_ERROR)
-            if not self._should_retry(prepared, attempt):
-                break
-        assert last is not None
-        return last
+        async def _attempt() -> ToolResult:
+            if self.timeout is not None:
+                return await asyncio.wait_for(
+                    prepared.tool.execute(prepared.params), timeout=self.timeout
+                )
+            return await prepared.tool.execute(prepared.params)
 
-    def _should_retry(self, prepared: PreparedCall, attempt: int) -> bool:
-        # 只对只读工具重试：写/命令类工具重试可能重复产生副作用。
-        return attempt < self.max_retries and prepared.tool.is_read_only
+        try:
+            result = await retry_async(
+                _attempt,
+                config=BackoffConfig(max_retries=self.max_retries),
+                # 领域守卫：只对只读工具重试（写/命令类工具重试会重复产生副作用）。
+                # 错误分类仍走 is_retryable（超时/连接等可重试），二者按 AND 组合。
+                guard=lambda: prepared.tool.is_read_only,
+                scope="tool",
+            )
+            return _Execution(result=result)
+        except TimeoutError as e:
+            return _Execution(exception=e, error_code=ToolErrorCode.TIMEOUT)
+        except Exception as e:  # noqa: BLE001 — 工具异常收成结果，不打断循环
+            return _Execution(exception=e, error_code=ToolErrorCode.EXECUTION_ERROR)
 
     # ---- repeat guard：防止同一工具同一参数连续重复调用 ----
 

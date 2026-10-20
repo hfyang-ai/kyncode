@@ -12,6 +12,7 @@ from kyncode.config import ProviderConfig
 from kyncode.conversation import ConversationManager
 from kyncode.conversation_pairing import ensure_tool_pairing
 from kyncode.mcp.loading_strategy import NATIVE_TOOL_SEARCH_BETA
+from kyncode.retry import BackoffConfig, retry_async
 from kyncode.serialization import (
     build_anthropic_messages,
     build_chat_completion_messages,
@@ -114,7 +115,9 @@ def _map_finish_reason(finish_reason: str | None) -> str:
 
 
 class LLMError(Exception):
-    pass
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class AuthenticationError(LLMError):
@@ -129,6 +132,26 @@ class RateLimitError(LLMError):
 
 class NetworkError(LLMError):
     pass
+
+
+# LLM 流式请求的退避重试：只在首字节前（建立请求阶段）重试，base=1s、cap=30s、
+# 最多重试 3 次，full jitter。单次请求的 connect 超时由 SDK 自己管。
+STREAM_RETRY_CONFIG = BackoffConfig(base=1.0, cap=30.0, max_retries=3)
+
+
+def _sdk_retry_after(exc: BaseException) -> float | None:
+    """从 SDK 异常里提取服务端建议的 retry-after（429 响应头），提取不到返回 None。"""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    raw = headers.get("retry-after")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 class LLMClient(ABC):
@@ -169,6 +192,16 @@ class AnthropicClient(LLMClient):
 
     def set_max_output_tokens(self, tokens: int) -> None:
         self.max_output_tokens = tokens
+
+    async def _enter_stream(self, kwargs: dict[str, Any]) -> Any:
+        """进入 messages.stream 上下文（即建立请求、首字节前阶段）。
+
+        ``__aenter__`` 会发起 HTTP 请求并可能抛限流/网络/鉴权异常；异常原样
+        向上抛，由 ``retry_async`` 决定是否退避重试。
+        """
+        stream = self._client.messages.stream(**kwargs)
+        await stream.__aenter__()
+        return stream
 
     async def fetch_model_context_window(self) -> int | None:
         """向 Anthropic 兼容的 /v1/models/{model} 端点查询模型的
@@ -259,96 +292,102 @@ class AnthropicClient(LLMClient):
         delta_cache_read = 0
         delta_cache_creation = 0
 
+        stream = None
         try:
-            async with self._client.messages.stream(**kwargs) as stream:
-                async for event in stream:
-                    if event.type == "content_block_start":
-                        block = event.content_block
-                        if block.type == "thinking":
-                            in_thinking = True
-                            thinking_accum = ""
-                            thinking_signature = ""
-                        elif block.type == "tool_use":
-                            current_tool_name = block.name
-                            current_tool_id = block.id
-                            json_accum = ""
-                            yield ToolCallStart(
-                                tool_name=current_tool_name,
-                                tool_id=current_tool_id,
-                            )
-                    elif event.type == "content_block_delta":
-                        delta = event.delta
-                        if delta.type == "text_delta":
-                            yield TextDelta(text=delta.text)
-                        elif delta.type == "thinking_delta":
-                            thinking_accum += delta.thinking
-                            yield ThinkingDelta(text=delta.thinking)
-                        elif delta.type == "signature_delta":
-                            thinking_signature = delta.signature
-                        elif delta.type == "input_json_delta":
-                            json_accum += delta.partial_json
-                            yield ToolCallDelta(text=delta.partial_json)
-                    elif event.type == "content_block_stop":
-                        if in_thinking:
-                            yield ThinkingComplete(
-                                thinking=thinking_accum,
-                                signature=thinking_signature,
-                            )
-                            in_thinking = False
-                        if current_tool_name:
-                            try:
-                                args = json.loads(json_accum) if json_accum else {}
-                            except json.JSONDecodeError:
-                                args = {}
-                            yield ToolCallComplete(
-                                tool_id=current_tool_id,
-                                tool_name=current_tool_name,
-                                arguments=args,
-                            )
-                            current_tool_name = ""
-                            current_tool_id = ""
-                            json_accum = ""
-                    elif event.type == "message_delta":
-                        # 捕获 message_delta 中的 usage 信息（MiniMax 兼容）。
-                        delta_usage = getattr(event, "usage", None)
-                        if delta_usage:
-                            v = getattr(delta_usage, "input_tokens", 0) or 0
-                            if v:
-                                delta_input_tokens = v
-                            v = getattr(delta_usage, "cache_read_input_tokens", 0) or 0
-                            if v:
-                                delta_cache_read = v
-                            v = (
-                                getattr(delta_usage, "cache_creation_input_tokens", 0)
-                                or 0
-                            )
-                            if v:
-                                delta_cache_creation = v
-                    elif event.type == "message_stop":
-                        pass
+            stream = await retry_async(
+                lambda: self._enter_stream(kwargs),
+                config=STREAM_RETRY_CONFIG,
+                wait_override=_sdk_retry_after,
+                scope="llm_stream",
+            )
+            async for event in stream:
+                if event.type == "content_block_start":
+                    block = event.content_block
+                    if block.type == "thinking":
+                        in_thinking = True
+                        thinking_accum = ""
+                        thinking_signature = ""
+                    elif block.type == "tool_use":
+                        current_tool_name = block.name
+                        current_tool_id = block.id
+                        json_accum = ""
+                        yield ToolCallStart(
+                            tool_name=current_tool_name,
+                            tool_id=current_tool_id,
+                        )
+                elif event.type == "content_block_delta":
+                    delta = event.delta
+                    if delta.type == "text_delta":
+                        yield TextDelta(text=delta.text)
+                    elif delta.type == "thinking_delta":
+                        thinking_accum += delta.thinking
+                        yield ThinkingDelta(text=delta.thinking)
+                    elif delta.type == "signature_delta":
+                        thinking_signature = delta.signature
+                    elif delta.type == "input_json_delta":
+                        json_accum += delta.partial_json
+                        yield ToolCallDelta(text=delta.partial_json)
+                elif event.type == "content_block_stop":
+                    if in_thinking:
+                        yield ThinkingComplete(
+                            thinking=thinking_accum,
+                            signature=thinking_signature,
+                        )
+                        in_thinking = False
+                    if current_tool_name:
+                        try:
+                            args = json.loads(json_accum) if json_accum else {}
+                        except json.JSONDecodeError:
+                            args = {}
+                        yield ToolCallComplete(
+                            tool_id=current_tool_id,
+                            tool_name=current_tool_name,
+                            arguments=args,
+                        )
+                        current_tool_name = ""
+                        current_tool_id = ""
+                        json_accum = ""
+                elif event.type == "message_delta":
+                    # 捕获 message_delta 中的 usage 信息（MiniMax 兼容）。
+                    delta_usage = getattr(event, "usage", None)
+                    if delta_usage:
+                        v = getattr(delta_usage, "input_tokens", 0) or 0
+                        if v:
+                            delta_input_tokens = v
+                        v = getattr(delta_usage, "cache_read_input_tokens", 0) or 0
+                        if v:
+                            delta_cache_read = v
+                        v = (
+                            getattr(delta_usage, "cache_creation_input_tokens", 0)
+                            or 0
+                        )
+                        if v:
+                            delta_cache_creation = v
+                elif event.type == "message_stop":
+                    pass
 
-                final = await stream.get_final_message()
-                usage = final.usage
-                input_tokens = usage.input_tokens
-                cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
-                cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
+            final = await stream.get_final_message()
+            usage = final.usage
+            input_tokens = usage.input_tokens
+            cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+            cache_creation = getattr(usage, "cache_creation_input_tokens", 0) or 0
 
-                # 当 message_start 报告 input_tokens=0 时（MiniMax 等兼容
-                # provider 的行为），降级使用 message_delta 中捕获的值。
-                if not input_tokens and delta_input_tokens:
-                    input_tokens = delta_input_tokens
-                if not cache_read and delta_cache_read:
-                    cache_read = delta_cache_read
-                if not cache_creation and delta_cache_creation:
-                    cache_creation = delta_cache_creation
+            # 当 message_start 报告 input_tokens=0 时（MiniMax 等兼容
+            # provider 的行为），降级使用 message_delta 中捕获的值。
+            if not input_tokens and delta_input_tokens:
+                input_tokens = delta_input_tokens
+            if not cache_read and delta_cache_read:
+                cache_read = delta_cache_read
+            if not cache_creation and delta_cache_creation:
+                cache_creation = delta_cache_creation
 
-                yield StreamEnd(
-                    stop_reason=final.stop_reason or "end_turn",
-                    input_tokens=input_tokens,
-                    output_tokens=usage.output_tokens,
-                    cache_read=cache_read,
-                    cache_creation=cache_creation,
-                )
+            yield StreamEnd(
+                stop_reason=final.stop_reason or "end_turn",
+                input_tokens=input_tokens,
+                output_tokens=usage.output_tokens,
+                cache_read=cache_read,
+                cache_creation=cache_creation,
+            )
 
         except _anthropic.AuthenticationError as e:
             raise AuthenticationError(f"Invalid API key: {e}") from e
@@ -361,7 +400,12 @@ class AnthropicClient(LLMClient):
         except _anthropic.APIConnectionError as e:
             raise NetworkError(f"Network error: {e}") from e
         except _anthropic.APIStatusError as e:
-            raise LLMError(f"API error ({e.status_code}): {e.message}") from e
+            raise LLMError(
+                f"API error ({e.status_code}): {e.message}", status_code=e.status_code
+            ) from e
+        finally:
+            if stream is not None:
+                await stream.close()
 
 
 class OpenAIClient(LLMClient):
@@ -408,7 +452,12 @@ class OpenAIClient(LLMClient):
         reasoning_text = ""
 
         try:
-            response_stream = await self._client.responses.create(**kwargs)
+            response_stream = await retry_async(
+                lambda: self._client.responses.create(**kwargs),
+                config=STREAM_RETRY_CONFIG,
+                wait_override=_sdk_retry_after,
+                scope="llm_stream",
+            )
             async for event in response_stream:
                 if event.type == "response.output_text.delta":
                     yield TextDelta(text=event.delta)
@@ -490,7 +539,9 @@ class OpenAIClient(LLMClient):
         except _openai.APIConnectionError as e:
             raise NetworkError(f"Network error: {e}") from e
         except _openai.APIStatusError as e:
-            raise LLMError(f"API error ({e.status_code}): {e.message}") from e
+            raise LLMError(
+                f"API error ({e.status_code}): {e.message}", status_code=e.status_code
+            ) from e
 
 
 class OpenAICompatClient(LLMClient):
@@ -582,7 +633,12 @@ class OpenAICompatClient(LLMClient):
         last_finish_reason: str | None = None
 
         try:
-            response = await self._client.chat.completions.create(**kwargs)
+            response = await retry_async(
+                lambda: self._client.chat.completions.create(**kwargs),
+                config=STREAM_RETRY_CONFIG,
+                wait_override=_sdk_retry_after,
+                scope="llm_stream",
+            )
             async for chunk in response:
                 if getattr(chunk, "usage", None) is not None:
                     final_usage = chunk.usage
@@ -681,7 +737,9 @@ class OpenAICompatClient(LLMClient):
         except _openai.APIConnectionError as e:
             raise NetworkError(f"Network error: {e}") from e
         except _openai.APIStatusError as e:
-            raise LLMError(f"API error ({e.status_code}): {e.message}") from e
+            raise LLMError(
+                f"API error ({e.status_code}): {e.message}", status_code=e.status_code
+            ) from e
 
 
 def create_client(config: ProviderConfig) -> LLMClient:
