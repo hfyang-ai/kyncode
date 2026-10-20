@@ -1731,6 +1731,7 @@ class KynCodeApp(App):
                             self.agent.total_input_tokens
                             + self.agent.total_output_tokens
                         )
+                        self.session.save_meta()
                         asyncio.ensure_future(self._update_session_summary())
                     if self.agent.plan_mode:
                         asyncio.ensure_future(self._show_plan_approval())
@@ -2088,9 +2089,7 @@ class KynCodeApp(App):
             )
             if summary:
                 self.session.meta.summary = summary
-                self.session.meta.save(
-                    self.session._sessions_dir / f"{self.session.session_id}.meta"
-                )
+                self.session.save_meta()
         except Exception:
             pass
 

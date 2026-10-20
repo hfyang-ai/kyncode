@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -21,12 +22,15 @@ from kyncode.memory.instructions import (
 from kyncode.memory.session import (
     Session,
     SessionManager,
+)
+from kyncode.memory.session_models import (
     SessionMeta,
     SessionRecord,
     make_compact_boundary,
     parse_compact_boundary,
     records_to_messages,
 )
+from kyncode.memory.session_store import JsonlSessionStore
 
 # =========================================================================
 # A. 指令文件（KYNCODE.md）
@@ -165,8 +169,8 @@ class TestSessionRecord:
         assert records[0].type is None
         assert records[0].content == "hello world"
 
-        line = records[0].to_jsonl()
-        restored = SessionRecord.from_jsonl(line)
+        line = records[0].to_dict()
+        restored = SessionRecord.from_dict(line)
         assert restored is not None
         assert restored.role == "user"
         assert restored.content == "hello world"
@@ -189,7 +193,7 @@ class TestSessionRecord:
         assert records[0].tool_uses[0]["tool_name"] == "ReadFile"
         assert records[0].tool_uses[0]["arguments"] == {"path": "/a"}
 
-        restored = SessionRecord.from_jsonl(records[0].to_jsonl())
+        restored = SessionRecord.from_dict(records[0].to_dict())
         got = restored.to_message()
         assert got.tool_uses[0].tool_name == "ReadFile"
         assert got.tool_uses[0].arguments == {"path": "/a"}
@@ -209,10 +213,10 @@ class TestSessionRecord:
         assert records[0].tool_results[0]["tool_use_id"] == "t1"
         assert records[0].tool_results[1]["is_error"] is True
 
-    def test_malformed_jsonl_returns_none(self) -> None:
-        assert SessionRecord.from_jsonl("{bad json") is None
-        # 缺少 role 字段的行（含旧格式记录）安全跳过
-        assert SessionRecord.from_jsonl('{"type":"assistant","content":"x"}') is None
+    def test_malformed_data_returns_none(self) -> None:
+        assert SessionRecord.from_dict("{bad json") is None
+        # 缺少 role 字段的数据（含旧格式记录）安全跳过
+        assert SessionRecord.from_dict({"type": "assistant", "content": "x"}) is None
 
     def test_plain_assistant_message(self) -> None:
         msg = Message(role="assistant", content="done")
@@ -229,15 +233,15 @@ class TestSessionRecord:
 class TestSession:
     def test_append_writes_jsonl_and_updates_meta(self, tmp_path: Path) -> None:
         sessions_dir = tmp_path / ".kyncode" / "sessions"
-        sessions_dir.mkdir(parents=True)
+        store = JsonlSessionStore(sessions_dir)
         meta = SessionMeta(id="test_session")
-        meta.save(sessions_dir / "test_session.meta")
+        store.create(meta)
         jsonl_path = sessions_dir / "test_session.jsonl"
 
-        with open(jsonl_path, "a", encoding="utf-8") as f:
-            session = Session("test_session", f, meta, sessions_dir)
-            session.append(Message(role="user", content="hello"))
-            session.append(Message(role="assistant", content="hi"))
+        session = Session("test_session", meta, store)
+        session.append(Message(role="user", content="hello"))
+        session.append(Message(role="assistant", content="hi"))
+        session.close()
 
         lines = jsonl_path.read_text(encoding="utf-8").strip().split("\n")
         assert len(lines) == 2
@@ -245,17 +249,16 @@ class TestSession:
         assert meta.title == "hello"
 
     def test_title_set_from_first_user_message(self, tmp_path: Path) -> None:
-        sessions_dir = tmp_path / ".kyncode" / "sessions"
-        sessions_dir.mkdir(parents=True)
+        store = JsonlSessionStore(tmp_path / ".kyncode" / "sessions")
         meta = SessionMeta(id="test_session")
-        jsonl_path = sessions_dir / "test_session.jsonl"
+        store.create(meta)
 
-        with open(jsonl_path, "a", encoding="utf-8") as f:
-            session = Session("test_session", f, meta, sessions_dir)
-            session.append(Message(role="assistant", content="welcome"))
-            assert meta.title == ""
-            session.append(Message(role="user", content="my first question"))
-            assert meta.title == "my first question"
+        session = Session("test_session", meta, store)
+        session.append(Message(role="assistant", content="welcome"))
+        assert meta.title == ""
+        session.append(Message(role="user", content="my first question"))
+        assert meta.title == "my first question"
+        session.close()
 
 
 class TestSessionManager:
@@ -287,7 +290,7 @@ class TestSessionManager:
         mgr = SessionManager(str(tmp_path))
         s = mgr.create()
         s.meta.last_active = datetime.now(UTC) - timedelta(days=31)
-        s.meta.save(mgr._sessions_dir / f"{s.session_id}.meta")
+        s.save_meta()
         s.close()
 
         removed = mgr.cleanup(max_age_days=30)
@@ -420,9 +423,9 @@ class TestCompactBoundaryRoundTrip:
         assert rec.is_compact_boundary()
         assert rec.content["summary"] == "the summary"
 
-        # JSONL 往返序列化（content 是一个 dict，必须能完整地序列化/反序列化）
-        line = rec.to_jsonl()
-        restored = SessionRecord.from_jsonl(line)
+        # 字典往返序列化（content 是一个 dict，必须能完整地序列化/反序列化）
+        data = rec.to_dict()
+        restored = SessionRecord.from_dict(data)
         assert restored is not None
         assert restored.is_compact_boundary()
 
@@ -454,7 +457,7 @@ class TestCompactBoundaryRoundTrip:
             Message(role="assistant", content="done"),
         ]
         rec = make_compact_boundary("sum", keep)
-        restored = SessionRecord.from_jsonl(rec.to_jsonl())
+        restored = SessionRecord.from_dict(rec.to_dict())
         _, keep_msgs = parse_compact_boundary(restored)
         assert len(keep_msgs) == 3
         assert keep_msgs[0].tool_uses[0].tool_use_id == "t9"
@@ -598,7 +601,7 @@ class TestCompactBoundaryRoundTrip:
 
 
 class TestSessionMeta:
-    def test_save_and_load(self, tmp_path: Path) -> None:
+    def test_dict_roundtrip(self) -> None:
         meta = SessionMeta(
             id="test_123",
             title="Test session",
@@ -606,19 +609,16 @@ class TestSessionMeta:
             message_count=10,
             total_tokens=5000,
         )
-        path = tmp_path / "test.meta"
-        meta.save(path)
+        loaded = SessionMeta.from_dict(meta.to_dict())
 
-        loaded = SessionMeta.load(path)
         assert loaded is not None
         assert loaded.id == "test_123"
         assert loaded.title == "Test session"
         assert loaded.message_count == 10
 
-    def test_load_invalid_returns_none(self, tmp_path: Path) -> None:
-        path = tmp_path / "bad.meta"
-        path.write_text("not json", encoding="utf-8")
-        assert SessionMeta.load(path) is None
+    def test_from_invalid_returns_none(self) -> None:
+        assert SessionMeta.from_dict("not json") is None
+        assert SessionMeta.from_dict({"id": "bad"}) is None
 
 
 # =========================================================================

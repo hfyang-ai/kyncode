@@ -89,9 +89,9 @@ def test_later_turns_only_append_new_messages():
 
 def test_persisted_flag_not_serialized():
     """标记不能进落盘内容，也不能影响相等判断。"""
-    from kyncode.memory.session import SessionRecord
+    from kyncode.memory.session_models import SessionRecord
 
     m = Message(role="user", content="hi", persisted=True)
     record = SessionRecord.from_message(m)[0]
-    assert "persisted" not in record.to_jsonl()
+    assert "persisted" not in record.to_dict()
     assert Message(role="user", content="hi") == m

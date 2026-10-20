@@ -21,7 +21,7 @@ async def handle_compact(ctx: CommandContext) -> None:
         # manual_compact 已重写了 ctx.conversation；下一次 _send_message
         # 会重新捕获 history_cursor，所以这里无需手动重置。
         if ctx.session is not None and result.boundary is not None:
-            from kyncode.memory.session import make_compact_boundary
+            from kyncode.memory.session_models import make_compact_boundary
 
             ctx.session.append_record(
                 make_compact_boundary(result.boundary.summary, result.boundary.keep)

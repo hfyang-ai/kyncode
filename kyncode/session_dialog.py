@@ -9,7 +9,7 @@ from textual.message import Message
 from textual.widgets import Static
 
 from kyncode import ui_colors
-from kyncode.memory.session import SessionMeta
+from kyncode.memory.session_models import SessionMeta
 
 
 def _format_size(size: int) -> str:

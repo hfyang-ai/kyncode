@@ -20,25 +20,37 @@ from kyncode.memory.session import (
     ResumeResult,
     Session,
     SessionManager,
+    generate_session_summary,
+)
+from kyncode.memory.session_models import (
     SessionMeta,
     SessionRecord,
-    generate_session_summary,
     make_compact_boundary,
     parse_compact_boundary,
+)
+from kyncode.memory.session_store import (
+    SESSIONS_DIR,
+    JsonlSessionStore,
+    SessionStore,
+    create_session_store,
 )
 
 __all__ = [
     "ENTRYPOINT_NAME",
+    "JsonlSessionStore",
     "MemoryFile",
     "MemoryManager",
     "RecallResult",
     "RelevantMemory",
     "ResumeResult",
+    "SESSIONS_DIR",
     "Session",
     "SessionManager",
     "SessionMeta",
     "SessionRecord",
+    "SessionStore",
     "build_memory_prompt",
+    "create_session_store",
     "ensure_memory_dir_exists",
     "find_relevant_memories",
     "generate_session_summary",
