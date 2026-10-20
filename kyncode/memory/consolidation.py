@@ -204,9 +204,13 @@ def _try_acquire_lock(mem_dir: str) -> int | None:
         except (ValueError, OSError):
             pass
 
-    if mtime_ms is not None and time.time() * 1000 - mtime_ms < HOLDER_STALE_MS:
-        if holder_pid is not None and _is_process_running(holder_pid):
-            return None
+    if (
+        mtime_ms is not None
+        and time.time() * 1000 - mtime_ms < HOLDER_STALE_MS
+        and holder_pid is not None
+        and _is_process_running(holder_pid)
+    ):
+        return None
 
     os.makedirs(mem_dir, exist_ok=True)
     Path(path).write_text(str(os.getpid()))
@@ -283,8 +287,8 @@ def _build_consolidation_prompt(
     lines = [
         "# Dream: Memory Consolidation",
         "",
-        "You are performing a dream — a reflective pass over your memory files. "
-        "Synthesize what you've learned recently into durable, well-organized "
+        "You are performing a dream — a reflective pass over your memory files. ",
+        "Synthesize what you've learned recently into durable, well-organized ",
         "memories so that future sessions can orient quickly.",
         "",
         f"Project memory directory: `{mem_dir}`",
@@ -312,8 +316,8 @@ def _build_consolidation_prompt(
         "",
         "## Phase 3 — Consolidate",
         "",
-        "For each thing worth remembering, write or update a memory file. "
-        "Each memory file uses YAML frontmatter with name, description, and metadata.type fields, "
+        "For each thing worth remembering, write or update a memory file. ",
+        "Each memory file uses YAML frontmatter with name, description, and metadata.type fields, ",
         "followed by a Markdown body.",
         "",
         "Focus on:",
@@ -323,8 +327,8 @@ def _build_consolidation_prompt(
         "",
         "## Phase 4 — Prune and index",
         "",
-        f"Update `{ENTRYPOINT_NAME}` so it stays under {MAX_ENTRYPOINT_LINES} lines AND under ~25KB. "
-        "It's an **index**, not a dump — each entry should be one line under ~150 characters: "
+        f"Update `{ENTRYPOINT_NAME}` so it stays under {MAX_ENTRYPOINT_LINES} lines AND under ~25KB. ",
+        "It's an **index**, not a dump — each entry should be one line under ~150 characters: ",
         "`- [Title](file.md) — one-line hook`. Never write memory content directly into it.",
         "",
         "- Remove pointers to memories that are now stale, wrong, or superseded",
@@ -334,8 +338,8 @@ def _build_consolidation_prompt(
         "",
         "---",
         "",
-        "**Tool constraints for this run:** Bash is restricted to read-only commands "
-        "(`ls`, `find`, `grep`, `cat`, `stat`, `wc`, `head`, `tail`, and similar). "
+        "**Tool constraints for this run:** Bash is restricted to read-only commands ",
+        "(`ls`, `find`, `grep`, `cat`, `stat`, `wc`, `head`, `tail`, and similar). ",
         "Anything that writes, redirects to a file, or modifies state will be denied.",
         "",
     ]
@@ -348,7 +352,7 @@ def _build_consolidation_prompt(
     lines.extend(
         [
             "",
-            "Return a brief summary of what you consolidated, updated, or pruned. "
+            "Return a brief summary of what you consolidated, updated, or pruned. ",
             "If nothing changed (memories are already tight), say so.",
         ]
     )

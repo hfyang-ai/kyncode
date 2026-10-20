@@ -27,12 +27,7 @@ def _parse_include(trimmed: str) -> str:
         return ""
     if " " in rest or "\t" in rest:
         return ""
-    if (
-        rest.startswith("./")
-        or rest.startswith("../")
-        or rest.startswith("~/")
-        or rest.startswith("/")
-    ):
+    if rest.startswith(("./", "../", "~/", "/")):
         return rest
     return ""
 

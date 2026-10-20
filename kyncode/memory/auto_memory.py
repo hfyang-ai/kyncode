@@ -77,9 +77,7 @@ def is_auto_mem_path(absolute_path: str, project_root: str) -> bool:
     if project_dir and abs_p.startswith(project_dir):
         return True
     user_dir = get_user_auto_mem_path()
-    if user_dir and abs_p.startswith(user_dir):
-        return True
-    return False
+    return bool(user_dir and abs_p.startswith(user_dir))
 
 
 def ensure_memory_dir_exists(memory_dir: str) -> None:
