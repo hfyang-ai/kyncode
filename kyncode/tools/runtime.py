@@ -6,6 +6,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
@@ -310,15 +311,25 @@ class ToolRuntime:
     def _build_allow_pattern(self, prepared: PreparedCall) -> str | None:
         """构造 ALLOW_ALWAYS 落盘规则的匹配模式（只构造，不落盘）。
 
-        与 _remember_allow 共用，让审计日志在落盘前就能拿到「授权了什么」。
+        文件类工具（ReadFile/WriteFile/EditFile）：目标落在工作区内时，把授权
+        泛化成整个工作区（``<work_dir>/*``），这样后续处理工作区内其他文件不再
+        逐个询问；只有工作区外的文件才继续询问。非文件工具维持「内容前缀 *」
+        的原有语义。
         """
-        from kyncode.permissions.rules import extract_content
+        from kyncode.permissions.rules import FILE_PATH_TOOLS, extract_content
 
         if self.permission_checker is None:
             return None
-        content = extract_content(
-            prepared.tool_call.tool_name, prepared.tool_call.arguments
-        )
+        tool_name = prepared.tool_call.tool_name
+        content = extract_content(tool_name, prepared.tool_call.arguments)
+
+        if tool_name in FILE_PATH_TOOLS and content:
+            sandbox = self.permission_checker.sandbox
+            # 只对绝对路径做工作区泛化：相对路径 content 后续匹配不上绝对前缀
+            # pattern，泛化反而会让它永远问不到，退化为原「内容前缀 *」更稳。
+            if Path(content).is_absolute() and sandbox.is_within_project(content):
+                return f"{sandbox.raw_root}/*"
+
         return f"{content[:60]}*" if len(content) > 60 else f"{content}*"
 
     def _remember_allow(self, prepared: PreparedCall) -> None:

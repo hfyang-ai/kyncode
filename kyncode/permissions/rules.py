@@ -27,6 +27,13 @@ _CONTENT_FIELDS: dict[str, str] = {
     "WebSearch": "query",
 }
 
+# content 字段是「文件路径」的工具。对这类工具，「允许并不再询问」的授权
+# 会按工作区泛化：处理工作区内文件不再询问，只有工作区外文件才询问
+# （见 ToolRuntime._build_allow_pattern）。
+FILE_PATH_TOOLS = frozenset(
+    name for name, field in _CONTENT_FIELDS.items() if field == "file_path"
+)
+
 # 匹配命令开头的 `cd <path> && ` / `cd <path>; ` 前缀（可多层）。
 # 路径可能是裸路径、单/双引号包裹的路径，或 - / ~ / .. 这类 cd 特殊参数。
 # 只有 cd 后面跟了 && 或 ;（即后面还有实际动作）才算「可剥的前缀」——

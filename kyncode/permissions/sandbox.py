@@ -30,7 +30,10 @@ class PathSandbox:
         extra_allowed: list[str] | None = None,
         deny_write: list[str] | None = None,
     ) -> None:
-        root = Path(project_root).resolve()
+        # 原始工作区根：绝对、但不解析 symlink。用于生成「整区授权」的规则前缀，
+        # 保证前缀与 LLM 传入的绝对路径（同样不解析 symlink）保持一致。
+        self._raw_root = Path(project_root).absolute()
+        root = self._raw_root.resolve()
         self._allowed_roots: list[Path] = [root, Path(tempfile.gettempdir()).resolve()]
         if extra_allowed:
             for p in extra_allowed:
@@ -48,6 +51,11 @@ class PathSandbox:
     @property
     def project_root(self) -> Path:
         return self._allowed_roots[0]
+
+    @property
+    def raw_root(self) -> Path:
+        """未解析 symlink 的工作区根，用于生成整区授权的规则前缀。"""
+        return self._raw_root
 
     def _is_deny_write(self, real_path: Path) -> bool:
         """检查路径是否命中禁写列表。
@@ -117,3 +125,19 @@ class PathSandbox:
                 continue
 
         return False, f"路径 {path} 超出沙箱范围"
+
+    def is_within_project(self, path: str) -> bool:
+        """判断路径是否落在工作区根目录（project_root）内。
+
+        与 :meth:`check` 不同，这里只认工作区根，不含临时目录等额外允许根——
+        用于「允许并不再询问」的授权面判定：工作区内文件泛化成整区授权，
+        工作区外文件仍逐个询问。
+        """
+        real_path, _ = self._resolve(path)
+        if real_path is None:
+            return False
+        try:
+            real_path.relative_to(self.project_root)
+            return True
+        except ValueError:
+            return False

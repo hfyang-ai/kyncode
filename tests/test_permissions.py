@@ -235,6 +235,21 @@ class TestPathSandbox:
         ok, _ = self.sandbox.check(str(deep))
         assert ok
 
+    def test_is_within_project_inside(self) -> None:
+        assert self.sandbox.is_within_project(str(self.tmpdir / "a.txt"))
+        # 相对路径也解析到工作区根下，判定为在内
+        assert self.sandbox.is_within_project("sub/file.txt")
+
+    def test_is_within_project_outside(self) -> None:
+        assert not self.sandbox.is_within_project("/etc/passwd")
+        assert not self.sandbox.is_within_project("~/.ssh/id_rsa")
+
+    def test_is_within_project_temp_dir_not_project(self) -> None:
+        # 临时目录虽在沙箱允许范围内，但不属于工作区根，
+        # 「允许并不再询问」不应把它并入整区授权。
+        tmp = Path(tempfile.gettempdir()) / "kyncode_scope.txt"
+        assert not self.sandbox.is_within_project(str(tmp))
+
 
 # ===========================================================================
 # 第三层：RuleEngine（规则引擎）

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -26,7 +27,7 @@ from kyncode.permissions.approval import (
 from kyncode.tools import ToolRegistry
 from kyncode.tools.base import Tool, ToolCallComplete, ToolResult
 from kyncode.tools.errors import ToolErrorCode
-from kyncode.tools.runtime import ToolRuntime
+from kyncode.tools.runtime import PreparedCall, ToolRuntime
 from kyncode.tracing import current_agent_id
 
 
@@ -409,6 +410,89 @@ async def test_permission_decision_audits_allow_always(caplog):
     assert len(decisions) == 1
     assert '"decision": "allow_always"' in decisions[0].message
     assert '"rule_pattern"' in decisions[0].message
+
+
+# ---- allow_always：文件工具按工作区泛化授权面 ----
+
+
+def _file_checker(root: Path) -> PermissionChecker:
+    return PermissionChecker(
+        detector=DangerousCommandDetector(),
+        sandbox=PathSandbox(str(root)),
+        rule_engine=RuleEngine(),
+        mode=PermissionMode.DEFAULT,
+    )
+
+
+def _prepared(tool: Tool, args: dict[str, Any]) -> PreparedCall:
+    return PreparedCall(
+        tool_call=ToolCallComplete("c1", tool.name, args),
+        tool=tool,
+        params=tool.params_model.model_validate(args),
+    )
+
+
+def test_allow_pattern_file_tool_inside_workspace(tmp_path):
+    """文件工具处理工作区内文件：授权泛化为整个工作区。"""
+    from kyncode.tools.edit_file import EditFile
+
+    checker = _file_checker(tmp_path)
+    runtime = ToolRuntime(_registry(EditFile()), permission_checker=checker)
+    target = tmp_path / "src" / "a.py"
+    pattern = runtime._build_allow_pattern(
+        _prepared(
+            EditFile(),
+            {"file_path": str(target), "old_string": "x", "new_string": "y"},
+        )
+    )
+    assert pattern == f"{tmp_path}/*"
+
+
+def test_allow_pattern_file_tool_outside_workspace(tmp_path):
+    """文件工具处理工作区外文件：保持具体路径，不并入整区授权。"""
+    from kyncode.tools.edit_file import EditFile
+
+    checker = _file_checker(tmp_path)
+    runtime = ToolRuntime(_registry(EditFile()), permission_checker=checker)
+    pattern = runtime._build_allow_pattern(
+        _prepared(
+            EditFile(),
+            {
+                "file_path": "/etc/passwd",
+                "old_string": "x",
+                "new_string": "y",
+            },
+        )
+    )
+    # 工作区外不泛化，仍是「内容前缀 *」的具体路径规则
+    assert pattern == "/etc/passwd*"
+
+
+def test_allow_pattern_file_tool_relative_path_not_scoped(tmp_path):
+    """文件工具传相对路径：不泛化（相对 content 匹配不上绝对前缀 pattern）。"""
+    from kyncode.tools.edit_file import EditFile
+
+    checker = _file_checker(tmp_path)
+    runtime = ToolRuntime(_registry(EditFile()), permission_checker=checker)
+    pattern = runtime._build_allow_pattern(
+        _prepared(
+            EditFile(),
+            {"file_path": "src/a.py", "old_string": "x", "new_string": "y"},
+        )
+    )
+    assert pattern == "src/a.py*"
+
+
+def test_allow_pattern_non_file_tool_unchanged(tmp_path):
+    """非文件工具维持原有「内容前缀 *」语义。"""
+    from kyncode.tools.bash import Bash
+
+    checker = _file_checker(tmp_path)
+    rt = ToolRuntime(_registry(Bash()), permission_checker=checker)
+    pattern = rt._build_allow_pattern(
+        _prepared(Bash(), {"command": "git status"})
+    )
+    assert pattern == "git status*"
 
 
 # ---- repeat guard：防止同一工具同一参数连续重复调用 ----
