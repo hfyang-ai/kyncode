@@ -508,9 +508,9 @@ async def run_agent_loop(
             conversation.add_assistant_message(
                 response.text, thinking_blocks=conv_thinking
             )
-            agent._loop_count += 1
+            agent.set_loop_count(agent.get_loop_count() + 1)
             if (
-                agent._loop_count % MEMORY_EXTRACTION_INTERVAL == 0
+                agent.get_loop_count() % MEMORY_EXTRACTION_INTERVAL == 0
                 and agent.memory_manager
             ):
                 asyncio.ensure_future(agent._extract_memories(conversation))

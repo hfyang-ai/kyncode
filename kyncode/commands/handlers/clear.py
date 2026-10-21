@@ -25,7 +25,7 @@ async def handle_clear(ctx: CommandContext) -> None:
     ctx.config["set_conversation"](ConversationManager())
 
     if ctx.agent:
-        ctx.agent._loop_count = 0
+        ctx.agent.set_loop_count(0)
         ctx.agent.clear_active_skills()
         # 重置 token 计数
         ctx.agent.total_input_tokens = 0

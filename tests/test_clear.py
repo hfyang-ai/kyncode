@@ -38,6 +38,12 @@ class MockAgent:
     def clear_active_skills(self) -> None:
         self._active_skills.clear()
 
+    def get_loop_count(self) -> int:
+        return self._loop_count
+
+    def set_loop_count(self, value: int) -> None:
+        self._loop_count = value
+
 
 @pytest.mark.asyncio
 async def test_clear_resets_session_id(tmp_path) -> None:
@@ -130,5 +136,5 @@ async def test_clear_resets_loop_count_and_skills(tmp_path) -> None:
 
     await handle_clear(ctx)
 
-    assert agent._loop_count == 0, "loop count 应归零"
+    assert agent.get_loop_count() == 0, "loop count 应归零"
     assert len(agent._active_skills) == 0, "active skills 应清空"

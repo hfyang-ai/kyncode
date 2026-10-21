@@ -108,7 +108,7 @@ async def handle_session(ctx: CommandContext) -> None:
             conv.history.append(msg)
         ctx.config["set_conversation"](conv)
         if ctx.agent:
-            ctx.agent._loop_count = 0
+            ctx.agent.set_loop_count(0)
             # 恢复运行时心智：激活的 skill、已读文件、技能快照。set_session 已把
             # agent.session_id 切到当前会话，state 路径随之就位。
             ctx.agent.load_runtime_state()
@@ -129,7 +129,7 @@ async def handle_session(ctx: CommandContext) -> None:
         ctx.config["set_session"](new_session)
         ctx.config["set_conversation"](ConversationManager())
         if ctx.agent:
-            ctx.agent._loop_count = 0
+            ctx.agent.set_loop_count(0)
         ctx.config["clear_chat"]()
         ctx.ui.add_system_message(f"新会话已创建: {new_session.session_id}")
 

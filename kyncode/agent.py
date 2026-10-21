@@ -281,6 +281,12 @@ class Agent:
         if self.permission_checker:
             self.permission_checker.mode = mode
 
+    def get_loop_count(self) -> int:
+        return self._loop_count
+
+    def set_loop_count(self, value: int) -> None:
+        self._loop_count = value
+
     def activate_skill(self, name: str, prompt_body: str) -> None:
         self.active_skills[name] = prompt_body
 
