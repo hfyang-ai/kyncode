@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 
 
 class TaskUpdateParams(BaseModel):
-    task_id: str = Field(description="ID of the task to update")
+    task_id: str = Field(
+        min_length=1, max_length=128, description="ID of the task to update"
+    )
     status: str | None = Field(
         default=None,
         description="New status: pending, in_progress, completed, or blocked",

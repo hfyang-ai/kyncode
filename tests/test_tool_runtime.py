@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kyncode.permissions import (
     DangerousCommandDetector,
@@ -33,6 +33,20 @@ from kyncode.tracing import current_agent_id
 
 class _Params(BaseModel):
     value: int = 0
+
+
+class _ConstrainedParams(BaseModel):
+    count: int = Field(default=1, ge=1, le=10)
+
+
+class _ConstrainedTool(Tool):
+    name = "ConstrainedTool"
+    description = "a fake tool with bounded params for tests"
+    params_model = _ConstrainedParams
+    category = "read"
+
+    async def execute(self, params: _ConstrainedParams) -> ToolResult:
+        return ToolResult(output=f"count={params.count}")
 
 
 class _FakeTool(Tool):
@@ -105,6 +119,47 @@ async def test_validation_error_short_circuits_in_prepare():
     assert result.result.is_error
     assert "Parameter validation error" in result.result.output
     assert result.executed is False
+
+
+@pytest.mark.asyncio
+async def test_validation_error_is_compact_and_hides_input():
+    runtime = ToolRuntime(_registry(_FakeTool()))
+    tc = ToolCallComplete("t1", "FakeTool", {"value": "not-an-int"})
+
+    result, _ = await _collect(runtime.invoke(tc))
+    assert result.result.is_error
+    assert result.result.error_code == ToolErrorCode.INVALID_ARGUMENTS
+    out = result.result.output
+    # 紧凑：单行，字段名 + 原因
+    assert out.startswith("Parameter validation error: ")
+    assert "value" in out
+    # 不含 Pydantic 的冗余细节（input 值、类型、文档 URL）
+    assert "input_value" not in out
+    assert "input_type" not in out
+    assert "For further information visit" not in out
+    assert "errors.pydantic.dev" not in out
+    assert "\n" not in out
+
+
+@pytest.mark.asyncio
+async def test_constraint_violation_short_circuits():
+    runtime = ToolRuntime(_registry(_ConstrainedTool()))
+    # count 必须 >= 1，传 0 触发约束校验
+    tc = ToolCallComplete("t1", "ConstrainedTool", {"count": 0})
+
+    result, _ = await _collect(runtime.invoke(tc))
+    assert result.result.is_error
+    assert result.result.error_code == ToolErrorCode.INVALID_ARGUMENTS
+    assert "count" in result.result.output
+    assert result.executed is False
+
+
+def test_bounded_params_flow_into_schema():
+    from kyncode.tools.read_file import ReadFile
+
+    schema = ReadFile().get_schema()["input_schema"]
+    assert schema["properties"]["offset"]["minimum"] == 0
+    assert schema["properties"]["limit"]["minimum"] == 1
 
 
 @pytest.mark.asyncio

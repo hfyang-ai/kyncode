@@ -8,8 +8,12 @@ from kyncode.tools.base import SKIP_DIRS, Tool, ToolResult
 
 
 class Params(BaseModel):
-    pattern: str = Field(description="Glob pattern to match (e.g. '**/*.py')")
-    path: str = Field(default=".", description="Base directory to search from")
+    pattern: str = Field(
+        min_length=1, max_length=1024, description="Glob pattern to match (e.g. '**/*.py')"
+    )
+    path: str = Field(
+        default=".", min_length=1, max_length=4096, description="Base directory to search from"
+    )
 
 
 class Glob(Tool):

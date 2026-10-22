@@ -128,9 +128,13 @@ def permission_content(server: str, tool: str) -> str:
 
 
 class McpCallParams(BaseModel):
-    server: str = Field(description="MCP server name, e.g. 'linear'.")
+    server: str = Field(
+        min_length=1, max_length=128, description="MCP server name, e.g. 'linear'."
+    )
     tool: str = Field(
-        description="Full tool name as returned by ToolSearch, e.g. 'mcp__linear__create_issue'."
+        min_length=1,
+        max_length=256,
+        description="Full tool name as returned by ToolSearch, e.g. 'mcp__linear__create_issue'.",
     )
     arguments: dict[str, Any] = Field(
         default_factory=dict,

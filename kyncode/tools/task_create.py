@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 
 
 class TaskCreateParams(BaseModel):
-    title: str = Field(description="Short, actionable task title")
+    title: str = Field(
+        min_length=1, max_length=512, description="Short, actionable task title"
+    )
     description: str = Field(default="", description="Detailed description of the task")
     assignee: str = Field(
         default="", description="Agent name to assign the task to (empty = unassigned)"

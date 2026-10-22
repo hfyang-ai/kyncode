@@ -9,9 +9,13 @@ from kyncode.tools.base import Tool, ToolResult
 
 
 class QuestionItem(BaseModel):
-    type: str = Field(description="Question type: text, radio, select, checkbox")
-    name: str = Field(description="Question identifier")
-    message: str = Field(description="Question text to display")
+    type: str = Field(
+        min_length=1, max_length=32, description="Question type: text, radio, select, checkbox"
+    )
+    name: str = Field(min_length=1, max_length=128, description="Question identifier")
+    message: str = Field(
+        min_length=1, max_length=4096, description="Question text to display"
+    )
     options: list[str] = Field(
         default_factory=list,
         description="Options for radio/select/checkbox types",
@@ -20,7 +24,7 @@ class QuestionItem(BaseModel):
 
 class AskUserParams(BaseModel):
     questions: list[QuestionItem] = Field(
-        description="List of questions to ask the user"
+        min_length=1, description="List of questions to ask the user"
     )
 
 

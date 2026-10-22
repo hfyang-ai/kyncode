@@ -12,7 +12,9 @@ if TYPE_CHECKING:
 
 class TaskStopParams(BaseModel):
     teammate: str = Field(
-        description="Name of the teammate to stop, as it appears in the from= field of a team-notification"
+        min_length=1,
+        max_length=128,
+        description="Name of the teammate to stop, as it appears in the from= field of a team-notification",
     )
 
 

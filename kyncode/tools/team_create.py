@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kyncode.tools.base import Tool, ToolResult
 
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 class TeamCreateParams(BaseModel):
-    team_name: str
+    team_name: str = Field(min_length=1, max_length=128)
     description: str = ""
 
 

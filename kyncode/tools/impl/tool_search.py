@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from kyncode.mcp.loading_strategy import McpLoadingMode
 from kyncode.mcp.tool_wrapper import MCP_TOOL_PREFIX
@@ -14,8 +14,8 @@ if __import__("typing").TYPE_CHECKING:
 
 
 class ToolSearchParams(BaseModel):
-    query: str
-    max_results: int = 5
+    query: str = Field(min_length=1, max_length=512)
+    max_results: int = Field(default=5, ge=1)
 
 
 class ToolSearchTool(Tool):

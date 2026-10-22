@@ -17,8 +17,10 @@ TIMEOUT = 15.0
 
 
 class Params(BaseModel):
-    query: str = Field(description="The search query")
-    max_results: int = Field(default=5, description="Maximum number of results (1-10)")
+    query: str = Field(min_length=1, max_length=512, description="The search query")
+    max_results: int = Field(
+        default=5, ge=1, le=10, description="Maximum number of results (1-10)"
+    )
 
 
 class _ResultParser(HTMLParser):

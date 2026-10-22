@@ -12,11 +12,21 @@ if TYPE_CHECKING:
 
 
 class Params(BaseModel):
-    file_path: str = Field(description="Absolute or relative path to the file to read")
-    offset: int = Field(
-        default=0, description="Line offset to start reading from (0-based)"
+    file_path: str = Field(
+        min_length=1,
+        max_length=4096,
+        description="Absolute or relative path to the file to read",
     )
-    limit: int = Field(default=2000, description="Maximum number of lines to read")
+    offset: int = Field(
+        default=0,
+        ge=0,
+        description="Line offset to start reading from (0-based)",
+    )
+    limit: int = Field(
+        default=2000,
+        ge=1,
+        description="Maximum number of lines to read",
+    )
 
 
 class ReadFile(Tool):

@@ -35,9 +35,12 @@ _TEXTUAL_EXACT = (
 
 
 class Params(BaseModel):
-    url: str = Field(description="Absolute http(s) URL to fetch")
+    url: str = Field(
+        min_length=1, max_length=2048, description="Absolute http(s) URL to fetch"
+    )
     max_chars: int = Field(
         default=8000,
+        ge=1,
         description="Maximum characters of extracted text to return (default 8000)",
     )
 

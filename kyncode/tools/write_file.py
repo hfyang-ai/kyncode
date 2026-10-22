@@ -12,7 +12,9 @@ if TYPE_CHECKING:
 
 
 class Params(BaseModel):
-    file_path: str = Field(description="Path to the file to write")
+    file_path: str = Field(
+        min_length=1, max_length=4096, description="Path to the file to write"
+    )
     content: str = Field(description="Content to write to the file")
 
 

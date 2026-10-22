@@ -13,11 +13,17 @@ if TYPE_CHECKING:
 
 
 class Params(BaseModel):
-    file_path: str = Field(description="Path to the file to edit")
-    old_string: str = Field(
-        description="The exact string to find and replace (must be unique in file)"
+    file_path: str = Field(
+        min_length=1, max_length=4096, description="Path to the file to edit"
     )
-    new_string: str = Field(description="The replacement string")
+    old_string: str = Field(
+        min_length=1,
+        max_length=1_000_000,
+        description="The exact string to find and replace (must be unique in file)",
+    )
+    new_string: str = Field(
+        max_length=1_000_000, description="The replacement string"
+    )
 
 
 class EditFile(Tool):

@@ -42,6 +42,16 @@ from kyncode.tracing import (
 log = logging.getLogger(__name__)
 
 
+def _format_validation_error(e: ValidationError) -> str:
+
+    parts: list[str] = []
+    for err in e.errors():
+        loc = ".".join(str(seg) for seg in err.get("loc", ()))
+        msg = err.get("msg", "invalid value")
+        parts.append(f"{loc}: {msg}" if loc else msg)
+    return "Parameter validation error: " + "; ".join(parts)
+
+
 @dataclass
 class PreparedCall:
     """prepare 阶段的产物：工具定义已找到、参数已通过 Schema 校验。"""
@@ -271,7 +281,7 @@ class ToolRuntime:
             params = tool.params_model.model_validate(tool_call.arguments)
         except ValidationError as e:
             return ToolResult(
-                output=f"Parameter validation error: {e}",
+                output=_format_validation_error(e),
                 is_error=True,
                 error_code=ToolErrorCode.INVALID_ARGUMENTS,
             )

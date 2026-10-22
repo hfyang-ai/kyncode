@@ -16,7 +16,9 @@ log = logging.getLogger(__name__)
 
 class SendMessageParams(BaseModel):
     to: str = Field(
-        description="Recipient teammate name or agent ID; use '*' to broadcast to all teammates"
+        min_length=1,
+        max_length=128,
+        description="Recipient teammate name or agent ID; use '*' to broadcast to all teammates",
     )
     content: str = Field(
         description="Message content. For plan_approval_response with approve=false, put rejection feedback here"

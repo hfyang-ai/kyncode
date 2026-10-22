@@ -13,7 +13,9 @@ if TYPE_CHECKING:
 
 
 class LoadSkillParams(BaseModel):
-    name: str = Field(description="The name of the skill to load")
+    name: str = Field(
+        min_length=1, max_length=128, description="The name of the skill to load"
+    )
 
 
 class LoadSkill(Tool):

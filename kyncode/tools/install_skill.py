@@ -13,11 +13,13 @@ if TYPE_CHECKING:
 
 class InstallSkillParams(BaseModel):
     url: str = Field(
+        min_length=1,
+        max_length=2048,
         description=(
             "The Skill URL to fetch. Examples: "
             '"https://www.skills.sh/anthropics/skills/frontend-design", '
             '"https://github.com/anthropics/skills/tree/main/skills/pdf".'
-        )
+        ),
     )
 
 

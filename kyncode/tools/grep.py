@@ -9,8 +9,12 @@ from kyncode.tools.base import SKIP_DIRS, Tool, ToolResult
 
 
 class Params(BaseModel):
-    pattern: str = Field(description="Regex pattern to search for")
-    path: str = Field(default=".", description="Base directory to search from")
+    pattern: str = Field(
+        min_length=1, max_length=1024, description="Regex pattern to search for"
+    )
+    path: str = Field(
+        default=".", min_length=1, max_length=4096, description="Base directory to search from"
+    )
     include: str = Field(
         default="", description="Glob filter for filenames (e.g. '*.py')"
     )

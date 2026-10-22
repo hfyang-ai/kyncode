@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 
 class AgentToolParams(BaseModel):
-    prompt: str
+    prompt: str = Field(min_length=1, max_length=1_000_000)
     description: str
     subagent_type: str | None = None
     model: str | None = None

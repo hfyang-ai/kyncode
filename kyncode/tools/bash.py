@@ -104,8 +104,15 @@ def _exit_code_hint(command: str, exit_code: int) -> str:
 
 
 class Params(BaseModel):
-    command: str = Field(description="Shell command to execute")
-    timeout: int = Field(default=120, description="Timeout in seconds (max 600)")
+    command: str = Field(
+        min_length=1, max_length=10000, description="Shell command to execute"
+    )
+    timeout: int = Field(
+        default=120,
+        ge=0,
+        le=MAX_TIMEOUT,
+        description="Timeout in seconds (max 600)",
+    )
 
 
 class Bash(Tool):
