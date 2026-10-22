@@ -19,7 +19,7 @@ async def handle_status(ctx: CommandContext) -> None:
     else:
         lines.append("会话: 无")
 
-    input_tokens, output_tokens = ctx.ui.get_token_count()
+    input_tokens, _ = ctx.ui.get_token_count()
     context_window = ctx.agent.context_window if ctx.agent else 200_000
     pct = int(input_tokens / context_window * 100) if context_window else 0
     lines.append(f"Token: {input_tokens:,} / {context_window:,}（{pct}%）")

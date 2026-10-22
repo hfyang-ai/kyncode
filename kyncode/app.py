@@ -18,7 +18,7 @@ from textual.theme import Theme
 from textual.widgets import Markdown, OptionList, Static, TextArea
 from textual.widgets.option_list import Option
 
-from kyncode import crashlog
+from kyncode import crashlog, ui_colors
 from kyncode.agent import Agent, PermissionRequest
 from kyncode.agent_loop import (
     CompactNotification,
@@ -90,7 +90,6 @@ from kyncode.tools.impl.tool_search import ToolSearchTool
 from kyncode.tools.install_skill import InstallSkillTool
 from kyncode.tools.load_skill import LoadSkill
 from kyncode.tools.mcp_call import McpCallTool
-from kyncode import ui_colors
 from kyncode.worktree.cleanup import start_stale_cleanup_task
 from kyncode.worktree.manager import WorktreeManager
 
@@ -744,9 +743,7 @@ class KynCodeApp(App):
         self._sandbox_cfg: SandboxAppConfig = sandbox_config or SandboxAppConfig()
         self.client: LLMClient | None = None
         self.conversation = ConversationManager()
-        self.registry: ToolRegistry = create_default_registry(
-            web_access=web_access
-        )
+        self.registry: ToolRegistry = create_default_registry(web_access=web_access)
         self.agent: Agent | None = None
         self.mcp_manager: MCPManager | None = None
         self._mcp_init_task: asyncio.Task[None] | None = None
