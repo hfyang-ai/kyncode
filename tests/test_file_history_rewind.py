@@ -61,7 +61,7 @@ def test_rewind_to_latest_snapshot_keeps_created_file(tmp_path):
     fh.make_snapshot(msg_index=2, user_text="第二轮：新建文件")
 
     # 回滚到文件创建之后的这个快照本身，文件应该保留（内容还原成当时写入的内容）。
-    changed = fh.rewind(1)
+    fh.rewind(1)
 
     assert new_file.exists()
     assert new_file.read_text(encoding="utf-8") == "print('hello')"

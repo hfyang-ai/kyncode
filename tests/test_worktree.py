@@ -275,7 +275,7 @@ class TestWorktreeManager:
 
     @pytest.mark.asyncio
     async def test_exit_remove_clean(self, manager):
-        wt = await manager.create("exit-rm")
+        await manager.create("exit-rm")
         await manager.enter("exit-rm")
         await manager.exit("exit-rm", action="remove", discard_changes=True)
         assert "exit-rm" not in manager.active

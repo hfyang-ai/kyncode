@@ -188,7 +188,7 @@ class ChatInput(TextArea):
         if self._history_file.exists():
             try:
                 lines = self._history_file.read_text(encoding="utf-8").splitlines()
-                self._history = [l for l in lines if l.strip()]
+                self._history = [line for line in lines if line.strip()]
             except Exception:
                 pass
 
@@ -419,18 +419,18 @@ class ToolCallBlock(Static, can_focus=True):
         # 或按 ctrl+o；其余工具仍然默认折叠，避免刷屏。
         if self.tool_name == "EditFile" and not is_error:
             self._collapsed = False
-            self._render_expanded()
+            self.render_expanded()
         else:
             self._collapsed = True
-            self._render_collapsed()
+            self.render_collapsed()
 
-    def _render_collapsed(self) -> None:
+    def render_collapsed(self) -> None:
         if self._is_error:
             self.update(f"  ✗ {self._title} ({self._elapsed:.1f}s)")
         else:
             self.update(f"  ✓ {self._title} ({self._elapsed:.1f}s)")
 
-    def _render_expanded(self) -> None:
+    def render_expanded(self) -> None:
         if self._is_error:
             header = f"  ✗ {self._title} ({self._elapsed:.1f}s)"
         else:
@@ -443,9 +443,9 @@ class ToolCallBlock(Static, can_focus=True):
             return
         self._collapsed = not self._collapsed
         if self._collapsed:
-            self._render_collapsed()
+            self.render_collapsed()
         else:
-            self._render_expanded()
+            self.render_expanded()
 
 
 _MODE_CYCLE = [
@@ -633,7 +633,7 @@ class SubAgentBlock(Static, can_focus=True):
         self._elapsed = elapsed
         self._result_preview = output[:300] if output else ""
         self._parse_stats(output)
-        self._render_done()
+        self.render_done()
 
     def _parse_stats(self, output: str) -> None:
         import re
@@ -642,7 +642,7 @@ class SubAgentBlock(Static, can_focus=True):
         if m:
             self._tool_count = int(m.group(1))
 
-    def _render_done(self) -> None:
+    def render_done(self) -> None:
         desc = f"({self._description})" if self._description else ""
         tool_info = f"{self._tool_count} tool uses · " if self._tool_count else ""
         if self._collapsed:
@@ -661,7 +661,7 @@ class SubAgentBlock(Static, can_focus=True):
         if not self._done:
             return
         self._collapsed = not self._collapsed
-        self._render_done()
+        self.render_done()
 
 
 class CyclicOptionList(OptionList):
@@ -928,7 +928,7 @@ class KynCodeApp(App):
         self._attach_ledger()
 
         self._exit_plan_tool._is_plan_mode = lambda: self.agent.plan_mode
-        self._exit_plan_tool._plan_exists = lambda: self.agent._get_plan_path().exists()
+        self._exit_plan_tool._plan_exists = lambda: self.agent.get_plan_path().exists()
 
         # Layer 2: 在后台异步拉取模型的 context window，不阻塞启动流程。
         # agent 已经有一个同步解析的窗口值（来自配置 / 映射表 / 默认值）；
@@ -1379,12 +1379,11 @@ class KynCodeApp(App):
                 continue
             block._collapsed = not block._collapsed
             if block._collapsed:
-                block._render_collapsed()
+                block.render_collapsed()
             else:
-                block._render_expanded()
+                block.render_expanded()
 
         for summary in self.query(ToolGroupSummary):
-            was_expanded = summary._expanded
             summary.toggle()
             parent = summary.parent
             if parent:
@@ -1398,7 +1397,7 @@ class KynCodeApp(App):
         for block in self.query(SubAgentBlock):
             if block._done:
                 block._collapsed = not block._collapsed
-                block._render_done()
+                block.render_done()
 
     def action_cancel(self) -> None:
         popup = self.query_one(CompletionPopup)
@@ -1835,7 +1834,7 @@ class KynCodeApp(App):
 
         choice = event.choice
         feedback = event.feedback
-        plan_path = self.agent._get_plan_path()
+        plan_path = self.agent.get_plan_path()
         plan_exists = plan_path.exists()
         plan_content = ""
         if plan_exists:
@@ -2187,7 +2186,7 @@ class KynCodeApp(App):
 
             if self.agent and self.agent.memory_manager:
                 tasks.append(
-                    asyncio.create_task(self.agent._extract_memories(self.conversation))
+                    asyncio.create_task(self.agent.extract_memories(self.conversation))
                 )
             if self.hook_engine:
                 tasks.append(

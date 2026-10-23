@@ -140,7 +140,7 @@ class Agent:
         self.memory_recall_task: Any | None = None
         self._memory_recall_consumed: bool = False
 
-    def _announce_deferred_tools(self, conversation: ConversationManager) -> None:
+    def announce_deferred_tools(self, conversation: ConversationManager) -> None:
         """把延迟工具名清单告诉模型，只在需要的时候发。
 
         dispatch 模式下这些工具永远不会进 tools[]，必须额外告诉模型调用要走
@@ -211,7 +211,7 @@ class Agent:
 
     _plan_path_cache: Path | None = None
 
-    def _get_plan_path(self) -> Path:
+    def get_plan_path(self) -> Path:
         if self._plan_path_cache is not None:
             return self._plan_path_cache
         import datetime
@@ -303,7 +303,7 @@ class Agent:
         if catalog_list is not None:
             self._agent_catalog_list = catalog_list
 
-    def _build_hook_context(self, event: str, **kwargs: str | dict) -> HookContext:
+    def build_hook_context(self, event: str, **kwargs: str | dict) -> HookContext:
         return HookContext(
             event_name=event,
             tool_name=str(kwargs.get("tool_name", "")),
@@ -316,7 +316,7 @@ class Agent:
     def _infer_file_path(self, args: dict) -> str:
         return str(args.get("file_path", args.get("path", "")))
 
-    def _drain_hook_events(self) -> list[HookEvent]:
+    def drain_hook_events(self) -> list[HookEvent]:
         if not self.hook_engine:
             return []
         return [
@@ -329,7 +329,7 @@ class Agent:
             for n in self.hook_engine.drain_notifications()
         ]
 
-    def _log_llm_response(self, response: LLMResponse, iteration: int) -> None:
+    def log_llm_response(self, response: LLMResponse, iteration: int) -> None:
         """把一轮 LLM 响应（文本 / 思考 / 工具调用）写成结构化 trace 到 debug.log。
 
         文本、思考与工具参数都脱敏——模型可能回显邮箱、密钥，日志不应留存
@@ -369,7 +369,7 @@ class Agent:
         finally:
             current_agent_id.reset(token)
 
-    def _consume_mailbox(self, conversation: ConversationManager) -> None:
+    def consume_mailbox(self, conversation: ConversationManager) -> None:
         if not self.team_name or not self._team_manager:
             return
         try:
@@ -401,7 +401,7 @@ class Agent:
             elapsed=invocation.elapsed,
         )
 
-    async def _execute_tool(
+    async def execute_tool(
         self, tc: ToolCallComplete
     ) -> AsyncIterator[PermissionRequest | tuple[ToolResult, float]]:
         invocation: ToolInvocation | None = None
@@ -453,7 +453,7 @@ class Agent:
             return
         self.recovery_state.record_file_read(path, content)
 
-    async def _extract_memories(self, conversation: ConversationManager) -> None:
+    async def extract_memories(self, conversation: ConversationManager) -> None:
         """触发记忆提取，合并策略见类内字段注释。
 
         当提取正在进行时，新的触发不会启动并发提取，而是标记 _pending_extraction。
@@ -485,7 +485,7 @@ class Agent:
                     "[extractMemories] running trailing extraction for stashed context"
                 )
                 # 递归调用自身处理尾随请求
-                await self._extract_memories(conversation)
+                await self.extract_memories(conversation)
 
     def maybe_persist_or_truncate(
         self, tool_use_id: str, text: str, exempt_ids: set[str] | None = None
@@ -660,10 +660,10 @@ class Agent:
             self, task, conversation, event_callback
         )
 
-    async def _execute_tool_noninteractive(self, tc: ToolCallComplete) -> ToolResult:
+    async def execute_tool_noninteractive(self, tc: ToolCallComplete) -> ToolResult:
         if self.hook_engine:
             file_path = self._infer_file_path(tc.arguments)
-            hook_ctx = self._build_hook_context(
+            hook_ctx = self.build_hook_context(
                 "pre_tool_use",
                 tool_name=tc.tool_name,
                 tool_args=tc.arguments,
@@ -684,7 +684,7 @@ class Agent:
 
         if self.hook_engine:
             file_path = self._infer_file_path(tc.arguments)
-            hook_ctx = self._build_hook_context(
+            hook_ctx = self.build_hook_context(
                 "post_tool_use",
                 tool_name=tc.tool_name,
                 tool_args=tc.arguments,

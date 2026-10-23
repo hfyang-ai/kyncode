@@ -41,7 +41,7 @@ def _count(conv: ConversationManager) -> int:
 
 
 def _agent(registry: ToolRegistry) -> Agent:
-    # 只走 _announce_deferred_tools，client 不会被碰到
+    # 只走 announce_deferred_tools，client 不会被碰到
     return Agent(client=None, registry=registry, protocol="anthropic")  # type: ignore[arg-type]
 
 
@@ -54,24 +54,24 @@ def test_deferred_reminder_injected_once():
     conv = ConversationManager()
 
     # 第 1 轮：首次宣告
-    agent._announce_deferred_tools(conv)
+    agent.announce_deferred_tools(conv)
     assert _count(conv) == 1
 
     # 第 2~10 轮：池子没变，一条都不该再加
     for _ in range(9):
         conv.add_assistant_message("thinking")
-        agent._announce_deferred_tools(conv)
+        agent.announce_deferred_tools(conv)
     assert _count(conv) == 1, "池子没变时不该重发"
 
     # MCP 异步连上，池子多出一个工具：补一条
     registry.register(_DeferredTool("mcp__infra__scale_service"))
-    agent._announce_deferred_tools(conv)
+    agent.announce_deferred_tools(conv)
     assert _count(conv) == 2, "池子变化后该补一条"
 
     # compact 把历史压成摘要，原来那两条都没了：重新宣告
     conv.history.clear()
     conv.add_user_message("summary of earlier conversation")
-    agent._announce_deferred_tools(conv)
+    agent.announce_deferred_tools(conv)
     assert _count(conv) == 1, "compact 之后该重新宣告"
 
 
@@ -89,5 +89,5 @@ def test_no_reminder_without_deferred_tools():
     """eager 模式下没有延迟工具，这条提醒完全不该出现。"""
     agent = _agent(ToolRegistry())
     conv = ConversationManager()
-    agent._announce_deferred_tools(conv)
+    agent.announce_deferred_tools(conv)
     assert _count(conv) == 0

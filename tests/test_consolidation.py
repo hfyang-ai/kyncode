@@ -363,7 +363,7 @@ async def _run_consolidation(work_dir, api_key, base_url, model, mem_dir):
     index_content = Path(os.path.join(mem_dir, "MEMORY.md")).read_text()
     print(f"  MEMORY.md:\n{index_content}")
 
-    index_lines = [l for l in index_content.strip().split("\n") if l.strip()]
+    index_lines = [line for line in index_content.strip().split("\n") if line.strip()]
     print(f"  Index lines: {len(index_lines)}")
 
     # 验证：索引应该被更新了（合并重复后行数减少）

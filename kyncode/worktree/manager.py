@@ -42,7 +42,7 @@ class WorktreeManager:
         self.active: dict[str, Worktree] = {}
         self.current_session: WorktreeSession | None = None
 
-    def _run_git(
+    def run_git(
         self, args: list[str], cwd: str | None = None
     ) -> subprocess.CompletedProcess[str]:
         env = {**os.environ, **GIT_ENV}
@@ -138,7 +138,7 @@ class WorktreeManager:
 
             os.makedirs(self.worktree_dir, exist_ok=True)
 
-            result = self._run_git(
+            result = self.run_git(
                 [
                     "worktree",
                     "add",
@@ -219,14 +219,14 @@ class WorktreeManager:
         save_worktree_session(self._kyncode_dir, None)
 
         if action == "remove":
-            await self._remove_worktree(name, wt)
+            await self.remove_worktree(name, wt)
 
     # ------------------------------------------------------------------
-    # 删除 worktree（内部方法）
+    # 删除 worktree
     # ------------------------------------------------------------------
 
-    async def _remove_worktree(self, name: str, wt: Worktree) -> None:
-        result = self._run_git(["worktree", "remove", "--force", wt.path])
+    async def remove_worktree(self, name: str, wt: Worktree) -> None:
+        result = self.run_git(["worktree", "remove", "--force", wt.path])
         if result.returncode != 0:
             log.warning("git worktree remove failed: %s", result.stderr.strip())
 
@@ -234,7 +234,7 @@ class WorktreeManager:
 
         flat_slug = flatten_slug(name)
         branch_name = f"worktree-{flat_slug}"
-        self._run_git(["branch", "-D", branch_name])
+        self.run_git(["branch", "-D", branch_name])
 
         self.active.pop(name, None)
 
@@ -250,7 +250,7 @@ class WorktreeManager:
         if has_worktree_changes(wt.path, head_commit):
             return CleanupResult(kept=True, path=wt.path, branch=wt.branch)
 
-        await self._remove_worktree(name, wt)
+        await self.remove_worktree(name, wt)
         return CleanupResult(kept=False)
 
     # ------------------------------------------------------------------
@@ -294,14 +294,14 @@ class WorktreeManager:
 
     def _get_current_branch(self) -> str:
         try:
-            result = self._run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+            result = self.run_git(["rev-parse", "--abbrev-ref", "HEAD"])
             return result.stdout.strip() if result.returncode == 0 else "HEAD"
         except (subprocess.SubprocessError, OSError):
             return "HEAD"
 
     def _get_head_commit(self) -> str:
         try:
-            result = self._run_git(["rev-parse", "HEAD"])
+            result = self.run_git(["rev-parse", "HEAD"])
             return result.stdout.strip() if result.returncode == 0 else ""
         except (subprocess.SubprocessError, OSError):
             return ""

@@ -331,9 +331,9 @@ async def run_agent_loop(
     conversation.inject_long_term_memory(agent.instructions_content, memory_content)
 
     if agent.hook_engine:
-        ctx = agent._build_hook_context("session_start")
+        ctx = agent.build_hook_context("session_start")
         await agent.hook_engine.run_hooks("session_start", ctx)
-        for he in agent._drain_hook_events():
+        for he in agent.drain_hook_events():
             yield he
 
     iteration = 0
@@ -350,20 +350,20 @@ async def run_agent_loop(
             break
 
         if agent.hook_engine:
-            ctx = agent._build_hook_context("turn_start")
+            ctx = agent.build_hook_context("turn_start")
             await agent.hook_engine.run_hooks("turn_start", ctx)
-            for he in agent._drain_hook_events():
+            for he in agent.drain_hook_events():
                 yield he
 
-        agent._consume_mailbox(conversation)
+        agent.consume_mailbox(conversation)
         if agent.notification_fn:
             for note in agent.notification_fn():
                 conversation.add_system_reminder(note)
 
         if agent.hook_engine:
-            ctx = agent._build_hook_context("pre_send")
+            ctx = agent.build_hook_context("pre_send")
             await agent.hook_engine.run_hooks("pre_send", ctx)
-            for he in agent._drain_hook_events():
+            for he in agent.drain_hook_events():
                 yield he
 
         hook_prompts = (
@@ -372,10 +372,10 @@ async def run_agent_loop(
         system = build_system_prompt(hook_prompts=hook_prompts, work_dir=agent.work_dir)
 
         if agent.plan_mode:
-            plan_path = str(agent._get_plan_path())
+            plan_path = str(agent.get_plan_path())
             if agent.permission_checker:
                 agent.permission_checker.plan_file_path = plan_path
-            plan_exists = agent._get_plan_path().exists()
+            plan_exists = agent.get_plan_path().exists()
             plan_reminder = build_plan_mode_reminder(plan_path, plan_exists, iteration)
             conversation.add_system_reminder(plan_reminder)
 
@@ -398,7 +398,7 @@ async def run_agent_loop(
                     f"Hook [{note.hook_id}] {note.event}: {note.output}"
                 )
 
-        agent._announce_deferred_tools(conversation)
+        agent.announce_deferred_tools(conversation)
 
         tools = agent.registry.get_all_schemas(agent.protocol)
 
@@ -454,12 +454,12 @@ async def run_agent_loop(
             yield event
 
         response = collector.response
-        agent._log_llm_response(response, iteration)
+        agent.log_llm_response(response, iteration)
 
         if agent.hook_engine:
-            ctx = agent._build_hook_context("post_receive", message=response.text)
+            ctx = agent.build_hook_context("post_receive", message=response.text)
             await agent.hook_engine.run_hooks("post_receive", ctx)
-            for he in agent._drain_hook_events():
+            for he in agent.drain_hook_events():
                 yield he
 
         agent.total_input_tokens += response.input_tokens
@@ -513,7 +513,7 @@ async def run_agent_loop(
                 agent.get_loop_count() % MEMORY_EXTRACTION_INTERVAL == 0
                 and agent.memory_manager
             ):
-                asyncio.ensure_future(agent._extract_memories(conversation))
+                asyncio.ensure_future(agent.extract_memories(conversation))
             if agent._consolidator is not None:
                 asyncio.ensure_future(
                     agent._consolidator.maybe_run(
@@ -521,11 +521,11 @@ async def run_agent_loop(
                     )
                 )
             if agent.hook_engine:
-                ctx = agent._build_hook_context("turn_end")
+                ctx = agent.build_hook_context("turn_end")
                 await agent.hook_engine.run_hooks("turn_end", ctx)
-                ctx = agent._build_hook_context("session_end")
+                ctx = agent.build_hook_context("session_end")
                 await agent.hook_engine.run_hooks("session_end", ctx)
-                for he in agent._drain_hook_events():
+                for he in agent.drain_hook_events():
                     yield he
             if agent.file_history is not None:
                 summary = (
@@ -597,7 +597,7 @@ async def run_agent_loop(
             result: ToolResult | None = None
             elapsed = 0.0
 
-            async for item in agent._execute_tool(tc):
+            async for item in agent.execute_tool(tc):
                 if isinstance(item, PermissionRequest):
                     yield item
                 else:
@@ -660,9 +660,9 @@ async def run_agent_loop(
             break
 
         if agent.hook_engine:
-            ctx = agent._build_hook_context("turn_end")
+            ctx = agent.build_hook_context("turn_end")
             await agent.hook_engine.run_hooks("turn_end", ctx)
-            for he in agent._drain_hook_events():
+            for he in agent.drain_hook_events():
                 yield he
         yield TurnComplete(turn=iteration)
 
@@ -716,10 +716,10 @@ async def run_agent_loop_to_completion(
         if agent.max_iterations > 0 and iteration > agent.max_iterations:
             break
         if agent.hook_engine:
-            ctx = agent._build_hook_context("turn_start")
+            ctx = agent.build_hook_context("turn_start")
             await agent.hook_engine.run_hooks("turn_start", ctx)
 
-        agent._consume_mailbox(conversation)
+        agent.consume_mailbox(conversation)
         if agent.notification_fn:
             for note in agent.notification_fn():
                 conversation.add_system_reminder(note)
@@ -738,7 +738,7 @@ async def run_agent_loop_to_completion(
         if isinstance(compact_result, CompactEvent):
             conversation.inject_environment(env_context)
 
-        agent._announce_deferred_tools(conversation)
+        agent.announce_deferred_tools(conversation)
 
         collector = StreamCollector()
         llm_stream = agent.client.stream(conversation, system=system, tools=tools)
@@ -746,7 +746,7 @@ async def run_agent_loop_to_completion(
             pass
 
         response = collector.response
-        agent._log_llm_response(response, iteration)
+        agent.log_llm_response(response, iteration)
         agent.total_input_tokens += response.input_tokens
         agent.total_output_tokens += response.output_tokens
 
@@ -827,7 +827,7 @@ async def run_agent_loop_to_completion(
                         "args": tc.arguments,
                     }
                 )
-            result = await agent._execute_tool_noninteractive(tc)
+            result = await agent.execute_tool_noninteractive(tc)
             content = agent.maybe_persist_or_truncate(
                 tc.tool_id, result.output, exempt_ids
             )
@@ -847,7 +847,7 @@ async def run_agent_loop_to_completion(
         agent.save_runtime_state()
 
         if agent.hook_engine:
-            ctx = agent._build_hook_context("turn_end")
+            ctx = agent.build_hook_context("turn_end")
             await agent.hook_engine.run_hooks("turn_end", ctx)
 
     return last_text

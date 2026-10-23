@@ -93,7 +93,7 @@ def _plan_mode_active(agent: Any) -> bool:
 def _read_plan_for_review(agent: Any) -> str:
     """读出队友写好的计划全文，交给 lead 审阅。"""
     try:
-        text = agent._get_plan_path().read_text(encoding="utf-8")
+        text = agent.get_plan_path().read_text(encoding="utf-8")
         return text if text.strip() else "（计划文件为空，队友可能未按要求写入计划）"
     except Exception:
         return "（计划文件为空，队友可能未按要求写入计划）"
