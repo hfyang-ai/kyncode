@@ -18,6 +18,7 @@ class InstallSkillParams(BaseModel):
         description=(
             "The Skill URL to fetch. Examples: "
             '"https://www.skills.sh/anthropics/skills/frontend-design", '
+            '"https://github.com/<owner>/<repo>" (repo root, skill subdir auto-detected), '
             '"https://github.com/anthropics/skills/tree/main/skills/pdf".'
         ),
     )
@@ -34,6 +35,7 @@ class InstallSkillTool(Tool):
     description = (
         "Download and install a Skill from a URL into the user-global skills directory "
         "(~/.kyncode/skills/). Supports skills.sh URLs (https://www.skills.sh/<owner>/<repo>/<name>), "
+        "GitHub repo root URLs (https://github.com/<owner>/<repo>, skill subdir auto-detected), "
         "GitHub tree URLs (https://github.com/<owner>/<repo>/tree/<ref>/<path>), and raw "
         "SKILL.md URLs. After install the Skill becomes available via /<name> and LoadSkill. "
         "Call this when the user pastes a Skill URL and asks to install it."

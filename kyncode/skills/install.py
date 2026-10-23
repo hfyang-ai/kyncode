@@ -25,6 +25,11 @@ _VALID_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9\-_]*$")
 
 GITHUB_API_BASE = "https://api.github.com"
 
+_GITHUB_HEADERS = {
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "kyncode-install-skill",
+}
+
 
 # ------------------------------------------------------------------
 # 数据结构
@@ -37,8 +42,8 @@ class SkillSource:
 
     owner: str
     repo: str
-    ref: str  # 分支或 tag，默认 "main"
-    subpath: str  # 仓库内 skill 目录的路径（无尾 /）
+    ref: str  # 分支或 tag；空串表示待查默认分支
+    subpath: str | None  # 仓库内 skill 目录的路径（无尾 /）；None 表示待探测
     name: str  # skill 名称（subpath 最后一段）
     original: str  # 用户原始 URL
 
@@ -90,18 +95,33 @@ def parse_skill_url(raw: str) -> SkillSource:
 
     # github.com 格式
     if host == "github.com":
-        # /<owner>/<repo>/tree/<ref>/<...subpath>
-        if len(parts) < 5 or parts[2] != "tree":
+        # 三种形态：
+        #   1. /<owner>/<repo>                         → 仓库根，subpath 待探测、ref 待查默认分支
+        #   2. /<owner>/<repo>/tree/<ref>              → 仓库根，subpath 待探测、ref 已知
+        #   3. /<owner>/<repo>/tree/<ref>/<...subpath> → 明确子目录
+        if len(parts) < 2:
+            raise ValueError("github.com URL must be /<owner>/<repo>[...]")
+        if len(parts) == 2:
+            return SkillSource(
+                owner=parts[0],
+                repo=parts[1],
+                ref="",
+                subpath=None,
+                name=parts[1],
+                original=raw,
+            )
+        if parts[2] != "tree":
             raise ValueError(
-                "github.com URL must be /<owner>/<repo>/tree/<ref>/<subpath>"
+                "github.com URL must be /<owner>/<repo>, "
+                "/<owner>/<repo>/tree/<ref>, or /<owner>/<repo>/tree/<ref>/<subpath>"
             )
         sub = "/".join(parts[4:])
         return SkillSource(
             owner=parts[0],
             repo=parts[1],
             ref=parts[3],
-            subpath=sub,
-            name=parts[-1],
+            subpath=sub or None,
+            name=parts[-1] if sub else parts[1],
             original=raw,
         )
 
@@ -162,27 +182,95 @@ def _parse_entries(data: list | dict) -> list[_ContentEntry]:
     ]
 
 
-async def _list_contents(
-    client: httpx.AsyncClient, src: SkillSource, subpath: str
-) -> list[_ContentEntry]:
-    """调用 GitHub Contents API 列出指定路径下的文件。"""
-    url = (
+def _contents_url(src: SkillSource, subpath: str) -> str:
+    return (
         f"{GITHUB_API_BASE}/repos/{src.owner}/{src.repo}"
         f"/contents/{subpath}?ref={quote(src.ref, safe='')}"
     )
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "kyncode-install-skill",
-    }
-    resp = await client.get(url, headers=headers)
+
+
+async def _probe_contents(
+    client: httpx.AsyncClient, src: SkillSource, subpath: str
+) -> list[_ContentEntry] | None:
+    """列出 subpath 下的条目；路径不存在（404）时返回 None。"""
+    resp = await client.get(_contents_url(src, subpath), headers=_GITHUB_HEADERS)
+    if resp.status_code == 404:
+        return None
     if resp.status_code == 403:
         raise RuntimeError(
             f"github API forbidden (rate-limited?): {resp.text[:512].strip()}"
         )
     if resp.status_code != 200:
-        raise RuntimeError(f"github API returned {resp.status_code} for {url}")
-
+        raise RuntimeError(
+            f"github API returned {resp.status_code} for {_contents_url(src, subpath)}"
+        )
     return _parse_entries(resp.json())
+
+
+async def _list_contents(
+    client: httpx.AsyncClient, src: SkillSource, subpath: str
+) -> list[_ContentEntry]:
+    """调用 GitHub Contents API 列出指定路径下的文件（路径必须存在）。"""
+    entries = await _probe_contents(client, src, subpath)
+    if entries is None:
+        raise RuntimeError(f"path not found in repo: {subpath}")
+    return entries
+
+
+def _entries_have_manifest(entries: list[_ContentEntry]) -> bool:
+    return any(
+        e.type == "file" and e.name in ("SKILL.md", "skill.yaml") for e in entries
+    )
+
+
+async def _default_branch(client: httpx.AsyncClient, src: SkillSource) -> str:
+    url = f"{GITHUB_API_BASE}/repos/{src.owner}/{src.repo}"
+    resp = await client.get(url, headers=_GITHUB_HEADERS)
+    if resp.status_code != 200:
+        raise RuntimeError(f"github API returned {resp.status_code} for {url}")
+    return resp.json().get("default_branch") or "main"
+
+
+async def _resolve_source(
+    client: httpx.AsyncClient, src: SkillSource
+) -> SkillSource:
+    """解析仓库根路径 URL：确定 ref 并探测 skill 子目录。
+
+    仅当 subpath 为 None（待探测）时才需要；明确的 tree/<ref>/<subpath> 直接返回。
+    """
+    if src.subpath is not None:
+        return src
+
+    ref = src.ref or await _default_branch(client, src)
+    resolved = SkillSource(
+        owner=src.owner,
+        repo=src.repo,
+        ref=ref,
+        subpath=None,
+        name=src.name,
+        original=src.original,
+    )
+
+    # 按约定顺序探测：根目录 → skills/<repo> → <repo>
+    for sub in ("", f"skills/{src.repo}", src.repo):
+        entries = await _probe_contents(client, resolved, sub)
+        if entries is None or not _entries_have_manifest(entries):
+            continue
+        name = sub.rstrip("/").split("/")[-1] or src.repo
+        return SkillSource(
+            owner=src.owner,
+            repo=src.repo,
+            ref=ref,
+            subpath=sub,
+            name=name,
+            original=src.original,
+        )
+
+    raise RuntimeError(
+        "could not locate SKILL.md (or skill.yaml) in the repository; "
+        f"try an explicit tree URL like "
+        f"https://github.com/{src.owner}/{src.repo}/tree/{ref}/<skill-subpath>"
+    )
 
 
 async def _fetch_blob(client: httpx.AsyncClient, entry: _ContentEntry) -> bytes:
@@ -287,35 +375,37 @@ async def install_skill(
     整个安装先写到临时目录，全部成功后再 rename 到最终位置，
     失败时不会留下残缺文件。
     """
-    _validate_skill_name(src.name)
-
     root = Path(install_root) if install_root else user_skills_root()
     root.mkdir(parents=True, exist_ok=True)
 
-    # 创建临时 staging 目录（与最终目录同级，保证 rename 是同一文件系统）
-    staging = Path(tempfile.mkdtemp(prefix=f".install-{src.name}-", dir=str(root)))
-    try:
-        report = InstallReport(skill_name=src.name)
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        # 根路径 URL（subpath=None）在此探测出真实 ref 与子目录
+        src = await _resolve_source(client, src)
+        _validate_skill_name(src.name)
+        assert src.subpath is not None
 
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        # 创建临时 staging 目录（与最终目录同级，保证 rename 是同一文件系统）
+        staging = Path(tempfile.mkdtemp(prefix=f".install-{src.name}-", dir=str(root)))
+        try:
+            report = InstallReport(skill_name=src.name)
             await _walk_and_download(client, src, src.subpath, staging, report, 0)
 
-        # 校验：下载的目录里必须有 skill manifest
-        if not _has_skill_manifest(staging):
-            raise RuntimeError(
-                "downloaded tree missing SKILL.md or skill.yaml — not a skill?"
-            )
+            # 校验：下载的目录里必须有 skill manifest
+            if not _has_skill_manifest(staging):
+                raise RuntimeError(
+                    "downloaded tree missing SKILL.md or skill.yaml — not a skill?"
+                )
 
-        # 原子替换：先删除旧安装（如果存在），再 rename
-        final = root / src.name
-        if final.exists():
-            shutil.rmtree(final)
-        staging.rename(final)
-        report.target_dir = str(final)
+            # 原子替换：先删除旧安装（如果存在），再 rename
+            final = root / src.name
+            if final.exists():
+                shutil.rmtree(final)
+            staging.rename(final)
+            report.target_dir = str(final)
 
-        return report
+            return report
 
-    except Exception:
-        # 安装失败时清理 staging 目录
-        shutil.rmtree(staging, ignore_errors=True)
-        raise
+        except Exception:
+            # 安装失败时清理 staging 目录
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
