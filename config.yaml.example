@@ -37,3 +37,12 @@ mcp_servers:
 enable_coordinator_mode: false   # 设为 true 后创建 Team 时 Lead 只能调度不能写代码
 
 web_access: true   # 是否给 Agent 注册联网工具（WebSearch / WebFetch），默认 true
+
+# 子 Agent 使用的模型 ID（可选，留空或整行注释掉 = 不配置）。
+# 配置后，所有子 Agent（Explore / Plan / general-purpose / teammate 等）都会用这个模型，
+# 且复用主 provider 的 protocol / base_url / api_key，只替换 model 字段。
+# 值可以是任意当前 provider 支持的模型名，不做别名翻译、直通不限制：
+#   subagent_model: deepseek-v4-flash          # 例：DeepSeek
+#   subagent_model: gpt-4o                     # 例：OpenAI
+#   subagent_model: claude-haiku-4-5-20251001  # 例：Anthropic
+subagent_model: ""   # 默认空串 = 不配置 = 直接复用主 agent 当前模型

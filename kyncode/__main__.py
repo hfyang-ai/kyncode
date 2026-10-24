@@ -117,6 +117,7 @@ def main() -> None:
         driver_class=NoAltScreenDriver,
         sandbox_config=config.sandbox,
         web_access=config.web_access,
+        subagent_model=config.subagent_model,
     )
     # TUI 内部的异常由 App._handle_exception 落盘，这里兜住的是框架之外的部分：
     # 启动、事件循环收尾，以及 Textual 自身抛出的异常
@@ -217,7 +218,8 @@ async def _run_prompt(
         symlink_directories=wt_cfg.symlink_directories,
     )
     trace_manager = TraceManager()
-    task_manager = TaskManager()
+    task_manager = TaskManager(trace_manager=trace_manager)
+    trace_manager.register_lead(agent.agent_id)
     agent_loader = AgentLoader(
         work_dir, enable_verification=config.enable_verification_agent
     )
@@ -233,6 +235,7 @@ async def _run_prompt(
         provider_config=provider,
         worktree_manager=wt_manager,
         team_manager=team_manager,
+        subagent_model=config.subagent_model,
     )
     registry.register(agent_tool)
     registry.register(

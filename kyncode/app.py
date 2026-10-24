@@ -727,6 +727,7 @@ class KynCodeApp(App):
         driver_class: type | None = None,
         sandbox_config: Any = None,
         web_access: bool = True,
+        subagent_model: str = "",
     ) -> None:
         super().__init__(driver_class=driver_class)
         self.providers = providers
@@ -738,6 +739,7 @@ class KynCodeApp(App):
         self._worktree_config = worktree_config
         self._teammate_mode = teammate_mode
         self._enable_coordinator_mode = enable_coordinator_mode
+        self._subagent_model = subagent_model
         from kyncode.config import SandboxAppConfig
 
         self._sandbox_cfg: SandboxAppConfig = sandbox_config or SandboxAppConfig()
@@ -768,8 +770,8 @@ class KynCodeApp(App):
         self.skill_executor: SkillExecutor | None = None
         self._load_skill_tool: LoadSkill | None = None
         self.agent_loader: AgentLoader | None = None
-        self.task_manager: TaskManager = TaskManager()
         self.trace_manager: TraceManager = TraceManager()
+        self.task_manager: TaskManager = TaskManager(trace_manager=self.trace_manager)
         self._notification_check_task: asyncio.Task[None] | None = None
         self.worktree_manager: WorktreeManager | None = None
         self._stale_cleanup_task: asyncio.Task[None] | None = None
@@ -925,6 +927,9 @@ class KynCodeApp(App):
         )
         self.agent.file_history = self.file_history
         self.agent.session_id = self.session.session_id
+        # Lead 注册为追踪树的根节点，后续子 agent 继承它的 trace_id，
+        # 让 /trace 与落盘能把同一次会话派出的所有 agent 聚合成一棵完整树。
+        self.trace_manager.register_lead(self.agent.agent_id)
         self._attach_ledger()
 
         self._exit_plan_tool._is_plan_mode = lambda: self.agent.plan_mode
@@ -1031,6 +1036,7 @@ class KynCodeApp(App):
             provider_config=provider,
             worktree_manager=self.worktree_manager,
             team_manager=self.team_manager,
+            subagent_model=self._subagent_model,
         )
         self.registry.register(agent_tool)
 
@@ -1080,7 +1086,7 @@ class KynCodeApp(App):
 
         from kyncode.commands.handlers.trace import create_trace_command
 
-        trace_cmd = create_trace_command(self.trace_manager, self.agent.agent_id)
+        trace_cmd = create_trace_command(self.trace_manager)
         self.command_registry.register_sync(trace_cmd)
 
         # --- 协调者模式初始化（工具已注册，激活推迟到 TeamCreate 时） ---

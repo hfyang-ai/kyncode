@@ -221,6 +221,17 @@ def validate_teammate_mode(mode: object) -> str:
     return mode
 
 
+def validate_subagent_model(raw_model: object) -> str:
+    """校验 subagent_model 配置：子 Agent 使用的模型 ID，任意非空字符串直通
+    （不限制白名单，第三方模型名如 "glm-5.1" 也能配）。空串/未配置表示复用主模型。
+    """
+    if raw_model is None:
+        return ""
+    if not isinstance(raw_model, str):
+        raise ConfigError("'subagent_model' must be a string")
+    return raw_model.strip()
+
+
 def validate_sandbox(raw_sb: dict | None) -> dict:
     """校验 sandbox 配置段，返回清洗后的配置字典。"""
     defaults = {
@@ -252,7 +263,8 @@ def validate_config_structure(raw: object) -> dict:
     返回的字典包含以下键：
         providers、permission_mode、mcp_servers、hooks、
         enable_fork、enable_verification_agent、worktree、
-        teammate_mode、enable_coordinator_mode、sandbox、web_access
+        teammate_mode、enable_coordinator_mode、sandbox、web_access、
+        subagent_model
     """
     if not isinstance(raw, dict) or "providers" not in raw:
         raise ConfigError("Config must contain a 'providers' list")
@@ -277,4 +289,5 @@ def validate_config_structure(raw: object) -> dict:
         "web_access": validate_bool_field(
             raw.get("web_access", True), "web_access"
         ),
+        "subagent_model": validate_subagent_model(raw.get("subagent_model")),
     }

@@ -304,7 +304,8 @@ class RemoteServer:
             symlink_directories=wt_cfg.symlink_directories,
         )
         trace_manager = TraceManager()
-        self.task_manager = TaskManager()
+        self.task_manager = TaskManager(trace_manager=trace_manager)
+        trace_manager.register_lead(self.agent.agent_id)
         agent_loader = AgentLoader(work_dir, enable_verification=enable_verification)
         agent_loader.load_all()
         self.team_manager = TeamManager(
@@ -321,6 +322,7 @@ class RemoteServer:
                 provider_config=provider,
                 worktree_manager=wt_manager,
                 team_manager=self.team_manager,
+                subagent_model=getattr(cfg, "subagent_model", ""),
             )
         )
         self.registry.register(

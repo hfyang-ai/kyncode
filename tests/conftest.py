@@ -18,3 +18,17 @@ def isolate_teams_dir(tmp_path):
     home.mkdir(parents=True, exist_ok=True)
     with patch("kyncode.teams.models.Path.home", return_value=home):
         yield
+
+
+@pytest.fixture(autouse=True)
+def isolate_trace_dir(tmp_path):
+    """把追踪落盘目录指到临时目录，避免测试把 trace JSON 写进真实 ~/.kyncode/trace。
+
+    DEFAULT_TRACE_DIR 在 import 时已按 Path.home() 求值，patch Path.home 无效，
+    必须直接替换模块常量。TraceManager() 不传 state_dir 时走默认构造，落到这里。
+    """
+    with patch(
+        "kyncode.agents.trace.DEFAULT_TRACE_DIR",
+        tmp_path / "trace",
+    ):
+        yield

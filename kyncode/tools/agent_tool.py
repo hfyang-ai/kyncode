@@ -11,7 +11,6 @@ from kyncode.tools.base import Tool, ToolResult
 if TYPE_CHECKING:
     from kyncode.agent import Agent
     from kyncode.agents.loader import AgentLoader
-    from kyncode.agents.parser import AgentDef
     from kyncode.agents.task_manager import TaskManager
     from kyncode.agents.trace import TraceManager
     from kyncode.client import LLMClient
@@ -95,6 +94,7 @@ class AgentTool(Tool):
         provider_config: Any = None,
         worktree_manager: Any = None,
         team_manager: Any = None,
+        subagent_model: str = "",
     ) -> None:
         self._agent_loader = agent_loader
         self._task_manager = task_manager
@@ -104,7 +104,39 @@ class AgentTool(Tool):
         self._provider_config = provider_config
         self._worktree_manager = worktree_manager
         self._team_manager = team_manager
+        # config 里配置的子 Agent 模型 ID；空串表示未配置，复用父 agent 当前模型
+        self._subagent_model = subagent_model
         self.query_source: str = ""
+
+    def _resolve_client(self) -> LLMClient:
+        """子 Agent 的模型由 config 的 subagent_model 决定：配置了就复用父 provider
+        的协议/地址/密钥、只替换 model 建一个新 client；没配置就复用父 agent 当前 client。
+        """
+        if self._subagent_model:
+            client = self._create_client_for_model(self._subagent_model)
+            if client is not None:
+                return client
+        return self._parent_agent.client
+
+    def _create_client_for_model(self, model_id: str) -> LLMClient | None:
+        if self._provider_config is None:
+            return None
+
+        from kyncode.client import create_client
+        from kyncode.config import ProviderConfig
+
+        config = ProviderConfig(
+            name=f"sub-{model_id}",
+            protocol=self._provider_config.protocol,
+            base_url=self._provider_config.base_url,
+            model=model_id,
+            api_key=self._provider_config.api_key,
+            context_window=self._provider_config.context_window,
+        )
+        try:
+            return create_client(config)
+        except Exception:
+            return None
 
     def _inherited_rule_engine(self) -> Any:
         """子 Agent 沿用父 Agent 的规则引擎：子 Agent 只换权限模式，
@@ -196,7 +228,7 @@ class AgentTool(Tool):
             )
 
         # 选择 LLM 客户端
-        client = self._select_llm(p, definition)
+        client = self._resolve_client()
 
         # 判断是否后台运行
         is_fork = not effective_type
@@ -291,6 +323,7 @@ class AgentTool(Tool):
             trace_node.agent_id,
             input_tokens=sub_agent.total_input_tokens,
             output_tokens=sub_agent.total_output_tokens,
+            tool_call_count=sub_agent.tool_call_count,
         )
         self._trace_manager.complete(trace_node.agent_id, "completed")
 
@@ -386,7 +419,7 @@ class AgentTool(Tool):
             )
 
         # 3. 选择 LLM
-        client = self._select_llm(p, definition)
+        client = self._resolve_client()
 
         # 4. 检测后端类型
         backend = self._team_manager.detect_backend()
@@ -563,23 +596,6 @@ class AgentTool(Tool):
             )
         )
 
-    def _select_llm(
-        self,
-        params: AgentToolParams,
-        definition: AgentDef,
-    ) -> LLMClient:
-
-        model_override = params.model or (
-            definition.model if definition.model != "inherit" else None
-        )
-
-        if model_override and model_override != "inherit":
-            client = self._create_client_for_model(model_override)
-            if client is not None:
-                return client
-
-        return self._parent_agent.client
-
     async def _execute_with_worktree(self, p: AgentToolParams) -> ToolResult:
         if self._worktree_manager is None:
             return ToolResult(
@@ -634,7 +650,7 @@ class AgentTool(Tool):
         notice = build_worktree_notice(self._parent_agent.work_dir, wt.path)
         task = notice + "\n\n" + p.prompt
 
-        client = self._select_llm(p, definition)
+        client = self._resolve_client()
 
         _base_registry = (
             getattr(self._parent_agent, "_full_registry", None)
@@ -690,6 +706,7 @@ class AgentTool(Tool):
             trace_node.agent_id,
             input_tokens=sub_agent.total_input_tokens,
             output_tokens=sub_agent.total_output_tokens,
+            tool_call_count=sub_agent.tool_call_count,
         )
         self._trace_manager.complete(trace_node.agent_id, "completed")
 
@@ -700,30 +717,3 @@ class AgentTool(Tool):
             )
 
         return ToolResult(output=result_text or "(sub-agent returned no output)")
-
-    def _create_client_for_model(self, model_alias: str) -> LLMClient | None:
-        if self._provider_config is None:
-            return None
-
-        from kyncode.client import create_client
-        from kyncode.config import ProviderConfig
-
-        model_map = {
-            "haiku": "claude-haiku-4-5-20251001",
-            "sonnet": "claude-sonnet-4-6-20250514",
-            "opus": "claude-opus-4-6-20250514",
-        }
-        model_id = model_map.get(model_alias, model_alias)
-
-        config = ProviderConfig(
-            name=f"sub-{model_alias}",
-            protocol=self._provider_config.protocol,
-            base_url=self._provider_config.base_url,
-            model=model_id,
-            api_key=self._provider_config.api_key,
-            context_window=self._provider_config.context_window,
-        )
-        try:
-            return create_client(config)
-        except Exception:
-            return None

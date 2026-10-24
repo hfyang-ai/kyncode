@@ -37,10 +37,11 @@ class BackgroundTask:
 
 
 class TaskManager:
-    def __init__(self) -> None:
+    def __init__(self, trace_manager: Any = None) -> None:
         self._tasks: dict[str, BackgroundTask] = {}
         self._notify_queue: asyncio.Queue[str] = asyncio.Queue()
         self._async_tasks: dict[str, asyncio.Task[None]] = {}
+        self._trace_manager = trace_manager
 
     def launch(
         self,
@@ -126,6 +127,7 @@ class TaskManager:
             bg.progress.input_tokens = bg.agent.total_input_tokens
             bg.progress.output_tokens = bg.agent.total_output_tokens
             self._async_tasks.pop(task_id, None)
+            self._complete_trace(bg)
             await self._notify_queue.put(task_id)
 
     def adopt_running(
@@ -170,7 +172,32 @@ class TaskManager:
             bg.progress.input_tokens = bg.agent.total_input_tokens
             bg.progress.output_tokens = bg.agent.total_output_tokens
             self._async_tasks.pop(task_id, None)
+            self._complete_trace(bg)
             await self._notify_queue.put(task_id)
+
+    def _complete_trace(self, bg: BackgroundTask) -> None:
+        """后台子 agent 结束时，把 token 与终态回写到追踪节点。
+
+        AgentTool 派发时已为子 agent 注册了 trace 节点，但后台执行路径
+        （_run_background / _continue_background）此前不回调 complete，
+        导致节点在落盘文件里永远停在 running。这里补上，让跨会话可查的
+        追踪数据状态准确。
+        """
+        tm = self._trace_manager
+        if tm is None:
+            return
+        status = {
+            "completed": "completed",
+            "failed": "failed",
+            "cancelled": "failed",
+        }.get(bg.status, "completed")
+        tm.update(
+            bg.agent.agent_id,
+            input_tokens=bg.agent.total_input_tokens,
+            output_tokens=bg.agent.total_output_tokens,
+            tool_call_count=bg.agent.tool_call_count,
+        )
+        tm.complete(bg.agent.agent_id, status)
 
     def get(self, task_id: str) -> BackgroundTask | None:
         return self._tasks.get(task_id)

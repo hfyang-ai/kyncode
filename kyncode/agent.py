@@ -104,6 +104,9 @@ class Agent:
         self.surfaced_memory_paths: set[str] = set()
         self.total_input_tokens = 0
         self.total_output_tokens = 0
+        # 本 agent 真正执行（executed=True）过的工具调用次数。三个执行路径
+        # 各自累加，完成时由 AgentTool / TaskManager 写进追踪节点。
+        self.tool_call_count = 0
         self.instructions_content = instructions_content
         self.memory_manager = memory_manager
         self.hook_engine = hook_engine
@@ -394,6 +397,7 @@ class Agent:
         if invocation.executed:
             self._record_recent_tool(tc.tool_name)
             self._snapshot_for_recovery(tc, invocation.result)
+            self.tool_call_count += 1
         return ToolExecResult(
             tool_id=tc.tool_id,
             tool_name=tc.tool_name,
@@ -420,6 +424,7 @@ class Agent:
             if invocation.executed:
                 self._record_recent_tool(tc.tool_name)
                 self._snapshot_for_recovery(tc, result)
+                self.tool_call_count += 1
         yield result, elapsed
 
     def _record_recent_tool(self, name: str) -> None:
@@ -656,9 +661,16 @@ class Agent:
         conversation: ConversationManager | None = None,
         event_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
-        return await run_agent_loop_to_completion(
-            self, task, conversation, event_callback
-        )
+        # 和 run() 一样把 current_agent_id 绑定到本 agent，让子 agent 的工具
+        # 调用日志（runtime 的 tool_call / permission_check）归属到它自己，
+        # 而不是继承父 agent 的 ContextVar 值或落成 null。
+        token = current_agent_id.set(self.agent_id)
+        try:
+            return await run_agent_loop_to_completion(
+                self, task, conversation, event_callback
+            )
+        finally:
+            current_agent_id.reset(token)
 
     async def execute_tool_noninteractive(self, tc: ToolCallComplete) -> ToolResult:
         if self.hook_engine:
@@ -680,6 +692,8 @@ class Agent:
         async for item in self.tool_runtime.invoke(tc, interactive=False):
             invocation = item
         assert invocation is not None
+        if invocation.executed:
+            self.tool_call_count += 1
         result = invocation.result
 
         if self.hook_engine:

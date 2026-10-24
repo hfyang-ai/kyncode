@@ -144,6 +144,9 @@ class AppConfig:
     sandbox: SandboxAppConfig = field(default_factory=SandboxAppConfig)
     # 是否给 Agent 注册联网工具（WebSearch / WebFetch）。默认开。
     web_access: bool = True
+    # 子 Agent 使用的模型 ID（任意 provider 支持的模型名，直通不限制白名单）。
+    # 空串表示未配置，子 Agent 复用主 agent 当前模型。
+    subagent_model: str = ""
 
 
 def _load_single_file(path: Path) -> AppConfig:
@@ -206,6 +209,7 @@ def _load_single_file(path: Path) -> AppConfig:
         enable_coordinator_mode=validated["enable_coordinator_mode"],
         sandbox=sandbox_cfg,
         web_access=validated["web_access"],
+        subagent_model=validated["subagent_model"],
     )
 
 
@@ -244,6 +248,9 @@ def _merge_config(base: AppConfig, override: AppConfig) -> AppConfig:
     # web_access 默认开，和 enable_fork 同理不能用「非零即覆盖」，
     # 否则配置里写 false 关不掉联网工具。
     base.web_access = override.web_access
+    # subagent_model 非空才覆盖（空串表示未配置，保留底层的值）
+    if override.subagent_model:
+        base.subagent_model = override.subagent_model
     return base
 
 
