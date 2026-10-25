@@ -134,13 +134,13 @@ async def test_ingest_readback_exempt(tmp_path: Path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ingest_readback_truncates_oversized(
+async def test_ingest_readback_rejects_oversized(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
     registry = ToolRegistry()
-    # 读回 35K token，超过 READBACK_TOKEN_LIMIT (30K)：豁免落盘但需截断，
-    # 防止一次读回超大文件把上下文窗口撑爆
+    # 读回 35K token，超过 READBACK_TOKEN_LIMIT (30K)：豁免落盘但拒绝整体读回，
+    # 引导改用 Grep 定向检索 / ReadFile 分块读，防止一次读回超大文件撑爆窗口
     registry.register(FakeReadFileTool("中" * 35_000))
     client_placeholder = MockLLMClient([])
     probe = Agent(client_placeholder, registry, "anthropic", work_dir=str(tmp_path))
@@ -163,11 +163,12 @@ async def test_ingest_readback_truncates_oversized(
         pass
 
     tr = _tool_results_msg(conv).tool_results[0]
-    # 进历史的是「截断到上限的前缀 + 提示」，而非 35K 原文
-    assert tr.content.startswith("中" * READBACK_TOKEN_LIMIT)
-    assert "已截断" in tr.content and "分块读取" in tr.content
+    # 进历史的是「拒绝整体读回 + 检索引导」，而非 35K 原文，也非截断前缀
+    assert "已阻止整体读回" in tr.content
+    assert str(READBACK_TOKEN_LIMIT) in tr.content
+    assert "Grep" in tr.content and "ReadFile" in tr.content
     assert len(tr.content) < 35_000
-    # 截断而非落盘：不生成溢写文件
+    # 拒绝而非落盘：不生成溢写文件
     assert not (agent.session_dir / "t_rb.txt").exists()
 
 

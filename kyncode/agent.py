@@ -31,7 +31,6 @@ from kyncode.context import (
 from kyncode.conversation import (
     ConversationManager,
     estimate_text_tokens,
-    truncate_text_by_tokens,
 )
 from kyncode.hooks import HookContext, HookEngine
 from kyncode.memory.auto_memory import MemoryManager
@@ -525,18 +524,20 @@ class Agent:
     def _guard_readback(self, text: str) -> str:
         """回读溢写文件时给结果加 token 上限。
 
-        豁免落盘是为了让模型能看到读回的全文、避免「读回→溢写」死循环，
-        但不等于无条件放行：超过 READBACK_TOKEN_LIMIT 就截断并提示分块读，
-        防止一次读回超大文件把上下文窗口撑爆。
+        豁免落盘是为了让模型能看到读回的内容、避免「读回→溢写」死循环，
+        但不等于无条件放行：超过 READBACK_TOKEN_LIMIT 就拒绝整体读回，
+        引导模型改用 Grep 定向检索或 ReadFile 分块读取，防止一次读回
+        超大文件把上下文窗口撑爆。
         """
         tokens = estimate_text_tokens(text)
         if tokens <= READBACK_TOKEN_LIMIT:
             return text
-        truncated = truncate_text_by_tokens(text, READBACK_TOKEN_LIMIT)
         return (
-            truncated
-            + f"\n\n[内容过长（约 {tokens} tokens），已截断到前 "
-            f"{READBACK_TOKEN_LIMIT} tokens，请用 ReadFile 的 offset/limit 分块读取剩余部分。]"
+            f"[已阻止整体读回：该文件约 {tokens} tokens，远超安全上限"
+            f"（{READBACK_TOKEN_LIMIT}），整体读入会撑爆上下文窗口。\n"
+            f"请改用定向检索或分块读取，只取所需内容：\n"
+            f"- Grep(pattern=\"关键词\", path=该文件路径) 定位相关行\n"
+            f"- ReadFile(file_path=该文件路径, offset=行号, limit=行数) 读特定段落]"
         )
 
     async def manual_compact(
