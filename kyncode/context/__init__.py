@@ -1,4 +1,5 @@
 from kyncode.context.manager import (
+    READBACK_TOKEN_LIMIT,
     CompactBoundary,
     CompactCircuitBreaker,
     CompactEvent,
@@ -21,6 +22,7 @@ from kyncode.context.manager import (
 )
 
 __all__ = [
+    "READBACK_TOKEN_LIMIT",
     "CompactBoundary",
     "CompactCircuitBreaker",
     "CompactEvent",

@@ -155,11 +155,27 @@ async def test_constraint_violation_short_circuits():
 
 
 def test_bounded_params_flow_into_schema():
-    from kyncode.tools.read_file import ReadFile
+    from kyncode.tools.read_file import MAX_READ_LINES, ReadFile
 
     schema = ReadFile().get_schema()["input_schema"]
     assert schema["properties"]["offset"]["minimum"] == 0
     assert schema["properties"]["limit"]["minimum"] == 1
+    assert schema["properties"]["limit"]["maximum"] == MAX_READ_LINES
+
+
+@pytest.mark.asyncio
+async def test_readfile_limit_capped():
+    from kyncode.tools.read_file import MAX_READ_LINES, ReadFile
+
+    runtime = ToolRuntime(_registry(ReadFile()))
+    tc = ToolCallComplete(
+        "t1", "ReadFile", {"file_path": "x", "limit": MAX_READ_LINES + 1}
+    )
+
+    result, _ = await _collect(runtime.invoke(tc))
+    assert result.result.is_error
+    assert result.result.error_code == ToolErrorCode.INVALID_ARGUMENTS
+    assert result.executed is False
 
 
 @pytest.mark.asyncio

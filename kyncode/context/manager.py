@@ -35,6 +35,10 @@ log = logging.getLogger(__name__)
 AGGREGATE_TOKEN_LIMIT = 60_000
 # 溢写后在历史里保留的预览长度（token）。足够模型判断是否需要读回、读回哪段。
 PREVIEW_TOKENS = 600
+# 读回溢写文件时允许单次进入上下文的最大 token。溢写文件的回读结果豁免落盘
+# （否则模型永远看不到全文、陷入「读回→溢写」死循环），但豁免不等于无条件放行：
+# 超过此上限就截断并提示用 offset/limit 分块读，防止模型一次读回超大文件把窗口撑爆。
+READBACK_TOKEN_LIMIT = 30_000
 
 # 摘要输出预留（token）。作为摘要输出上限的推导基数（compute_summary_max_tokens
 # 取它的 SUMMARY_OUTPUT_RATIO 倍）。

@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from test_agent import MockLLMClient
 
 from kyncode.agent import Agent
-from kyncode.context.manager import AGGREGATE_TOKEN_LIMIT
+from kyncode.context.manager import AGGREGATE_TOKEN_LIMIT, READBACK_TOKEN_LIMIT
 from kyncode.conversation import ConversationManager, estimate_text_tokens
 from kyncode.tools import ToolRegistry
 from kyncode.tools.base import (
@@ -130,6 +130,44 @@ async def test_ingest_readback_exempt(tmp_path: Path, monkeypatch) -> None:
     # 回读结果豁免溢写：原文进历史，且没有生成新的溢写文件
     tr = _tool_results_msg(conv).tool_results[0]
     assert len(tr.content) == 20_000
+    assert not (agent.session_dir / "t_rb.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_ingest_readback_truncates_oversized(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    registry = ToolRegistry()
+    # 读回 35K token，超过 READBACK_TOKEN_LIMIT (30K)：豁免落盘但需截断，
+    # 防止一次读回超大文件把上下文窗口撑爆
+    registry.register(FakeReadFileTool("中" * 35_000))
+    client_placeholder = MockLLMClient([])
+    probe = Agent(client_placeholder, registry, "anthropic", work_dir=str(tmp_path))
+    readback_path = str(probe.session_dir / "toolu_old.txt")
+
+    client = MockLLMClient(
+        [
+            [
+                ToolCallComplete("t_rb", "ReadFile", {"file_path": readback_path}),
+                StreamEnd("tool_use", 1, 1),
+            ],
+            _end_turn(),
+        ]
+    )
+    agent = Agent(client, registry, "anthropic", work_dir=str(tmp_path))
+    conv = ConversationManager()
+    conv.add_user_message("read it back")
+
+    async for _ in agent.run(conv):
+        pass
+
+    tr = _tool_results_msg(conv).tool_results[0]
+    # 进历史的是「截断到上限的前缀 + 提示」，而非 35K 原文
+    assert tr.content.startswith("中" * READBACK_TOKEN_LIMIT)
+    assert "已截断" in tr.content and "分块读取" in tr.content
+    assert len(tr.content) < 35_000
+    # 截断而非落盘：不生成溢写文件
     assert not (agent.session_dir / "t_rb.txt").exists()
 
 

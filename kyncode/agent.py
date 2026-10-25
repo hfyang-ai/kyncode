@@ -21,13 +21,18 @@ from kyncode.agent_loop import (
 )
 from kyncode.client import LLMClient
 from kyncode.context import (
+    READBACK_TOKEN_LIMIT,
     CompactCircuitBreaker,
     CompactEvent,
     RecoveryState,
     auto_compact,
     ensure_session_dir,
 )
-from kyncode.conversation import ConversationManager, estimate_text_tokens
+from kyncode.conversation import (
+    ConversationManager,
+    estimate_text_tokens,
+    truncate_text_by_tokens,
+)
 from kyncode.hooks import HookContext, HookEngine
 from kyncode.memory.auto_memory import MemoryManager
 from kyncode.permissions import (
@@ -504,7 +509,7 @@ class Agent:
         # 溢写文件的回读结果豁免；写盘失败会原样保留，同一块磁盘
         # 聚合预算也不必再试，所以两种结果都标记豁免
         if exempt_ids is not None and tool_use_id in exempt_ids:
-            return text
+            return self._guard_readback(text)
         if estimate_text_tokens(text) > MAX_OUTPUT_TOKENS:
             try:
                 fp = persist_tool_result(tool_use_id, text, self.session_dir)
@@ -516,6 +521,23 @@ class Agent:
                 exempt_ids.add(tool_use_id)
             return make_persisted_preview(text, fp)
         return text
+
+    def _guard_readback(self, text: str) -> str:
+        """回读溢写文件时给结果加 token 上限。
+
+        豁免落盘是为了让模型能看到读回的全文、避免「读回→溢写」死循环，
+        但不等于无条件放行：超过 READBACK_TOKEN_LIMIT 就截断并提示分块读，
+        防止一次读回超大文件把上下文窗口撑爆。
+        """
+        tokens = estimate_text_tokens(text)
+        if tokens <= READBACK_TOKEN_LIMIT:
+            return text
+        truncated = truncate_text_by_tokens(text, READBACK_TOKEN_LIMIT)
+        return (
+            truncated
+            + f"\n\n[内容过长（约 {tokens} tokens），已截断到前 "
+            f"{READBACK_TOKEN_LIMIT} tokens，请用 ReadFile 的 offset/limit 分块读取剩余部分。]"
+        )
 
     async def manual_compact(
         self, conversation: ConversationManager

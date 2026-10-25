@@ -7,6 +7,11 @@ from pydantic import BaseModel, Field
 
 from kyncode.tools.base import Tool, ToolResult
 
+# 单次 ReadFile 最多读取的行数上限。默认 2000，允许分块读大文件时一次读多一点，
+# 但封顶防止模型传离谱的 limit 一次性读回海量内容（token 级兜底交给
+# context 层的 READBACK_TOKEN_LIMIT）。
+MAX_READ_LINES = 5000
+
 if TYPE_CHECKING:
     from kyncode.tools.file_state_cache import FileStateCache
 
@@ -25,6 +30,7 @@ class Params(BaseModel):
     limit: int = Field(
         default=2000,
         ge=1,
+        le=MAX_READ_LINES,
         description="Maximum number of lines to read",
     )
 
