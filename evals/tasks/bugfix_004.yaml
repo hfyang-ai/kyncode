@@ -1,11 +1,15 @@
 id: bugfix_004
 category: bugfix
 kind: code_change
-title: 修复空列表边界
-prompt: 'work.py 的 first(items) 在 items 为空时会抛 IndexError。
+title: 目录统计漏算子目录
+prompt: 'filesystem.total_size 用于递归统计一个目录树里所有文件的大小之和。
 
-  请修复，使得空列表时返回 None，其余情况返回第一个元素。'
+  用户反馈：包含嵌套子目录的目录统计结果偏小。
+
+  请排查递归遍历逻辑并修复，正确处理多层嵌套目录。'
 timeout_seconds: 300
 max_retries: 0
+difficulty: hard
+labels: []
 grader:
   type: fail_to_pass

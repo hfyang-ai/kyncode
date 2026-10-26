@@ -1,0 +1,19 @@
+id: feature_003
+category: feature
+kind: code_change
+title: 实现事件总线
+prompt: 'bus.py 里的 EventBus 还没有实现。请实现它：
+
+  - on(event, handler) 注册处理器，返回取消订阅函数
+
+  - once(event, handler) 只触发一次的处理器
+
+  - emit(event, *args) 触发该事件所有处理器，按注册顺序调用
+
+  不要改动已经实现的 normalize 函数。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

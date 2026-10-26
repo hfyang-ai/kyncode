@@ -1,0 +1,23 @@
+id: concurrency_004
+category: concurrency
+kind: code_change
+title: 实现生产者消费者队列
+prompt: 'pipeline.py 里的 BoundedQueue 还没有实现。请实现它（基于标准库 queue.Queue）：
+
+  - put(item) 放入一个元素
+
+  - get() 取出一个元素（阻塞直到有元素）
+
+  - close() 标记生产结束（向队列放入结束哨兵 Sentinel）
+
+  - 支持迭代（__iter__），迭代在遇到结束哨兵时停止
+
+  要求：一个生产者线程、一个消费者线程能通过 for 迭代正确协作，消费到全部元素。
+
+  不要改动已经实现的 Sentinel 常量。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

@@ -1,0 +1,19 @@
+id: algorithm_002
+category: algorithm
+kind: code_change
+title: 实现并查集（连通分量）
+prompt: 'unionfind.py 里的 UnionFind 还没有实现。请实现它：
+
+  - union(a, b) 合并两个元素所在集合
+
+  - find(a) 返回元素所在集合的代表元（带路径压缩）
+
+  - connected(a, b) 判断两元素是否在同一集合
+
+  不要改动已经实现的 count_nodes 函数。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

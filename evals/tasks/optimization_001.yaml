@@ -1,0 +1,17 @@
+id: optimization_001
+category: optimization
+kind: code_change
+title: 实现 O(n) 两数之和
+prompt: 'twosum.py 里的 two_sum 还没有实现。请实现它：
+
+  在 nums 里找两个下标不同的数，使它们的和等于 target，返回这两个数的下标（任意顺序）。
+
+  要求 O(n) 时间。输入规模可达数万，请勿用 O(n²) 暴力。
+
+  不要改动已经实现的 pair_sum 函数。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

@@ -1,11 +1,19 @@
 id: refactor_003
 category: refactor
 kind: code_change
-title: 抽取基类消除重复
-prompt: 'cat.py 和 dog.py 里各有一个 speak 方法，逻辑类似。
+title: 拆巨型模块并消除循环依赖
+prompt: 'app.py 同时定义了用户相关和订单相关的函数，且 user.py 与 order.py
 
-  抽取一个 Animal 基类（放在 animal.py），让 Cat、Dog 继承它。'
+  之间互相 import 形成了循环依赖。
+
+  请：1) 把 app.py 里的函数拆分到 users.py 和 orders.py；
+
+  2) 解除 user/order 之间的循环依赖；
+
+  3) 让 app.py 通过 re-export 保持原有 from app import ... 的用法不变。'
 timeout_seconds: 300
 max_retries: 0
+difficulty: hard
+labels: []
 grader:
   type: fail_to_pass

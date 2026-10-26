@@ -1,11 +1,17 @@
 id: refactor_001
 category: refactor
 kind: code_change
-title: 抽取重复代码到公共模块
-prompt: 'a.py 和 b.py 里都有一个 process 函数，实现完全相同。
+title: 抽模板方法基类消除重复
+prompt: 'payments.py 里三个支付类（Credit/Debit/Crypto）都重复实现了相同的
 
-  把它抽取到新建的 shared.py，并让 a.py、b.py 从 shared 导入。'
+  validate 逻辑和 process 骨架。请在 payments.py 里抽取一个
+
+  PaymentProcessor 基类（含 validate 和模板方法 process），
+
+  三个子类继承它并只实现各自的 _pay 钩子，保持对外行为不变。'
 timeout_seconds: 300
 max_retries: 0
+difficulty: hard
+labels: []
 grader:
   type: fail_to_pass

@@ -1,0 +1,27 @@
+id: long_task_001
+category: long_task
+kind: code_change
+title: 按设计文档实现多模块用户服务
+prompt: '这是一个需要分阶段完成的任务：
+
+  1. 阅读 design.md，理解用户管理系统的设计与需求。
+
+  2. 阅读 models.py、repo.py、validators.py，理解已有的数据模型、仓库和校验工具。
+
+  3. 在 service.py 中实现 UserService 类（方法体目前是 raise NotImplementedError），组合已有模块完成业务逻辑。
+
+  4. 自己验证实现的正确性（可直接运行测试或交互验证）。
+
+  注意：不要改动 design.md、models.py、repo.py、validators.py。'
+timeout_seconds: 600
+max_retries: 0
+difficulty: hard
+labels:
+- long
+grader:
+  type: fail_to_pass
+  forbidden_files:
+  - design.md
+  - models.py
+  - repo.py
+  - validators.py

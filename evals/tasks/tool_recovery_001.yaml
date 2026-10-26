@@ -1,0 +1,13 @@
+id: tool_recovery_001
+category: tool_recovery
+kind: code_change
+title: 解除三方循环导入
+prompt: 'import a 会报 ImportError（循环导入）：a → b → c → a 形成三方循环。
+
+  请解除循环依赖，使三个模块都能被正常 import 和调用，且各自的函数行为不变。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

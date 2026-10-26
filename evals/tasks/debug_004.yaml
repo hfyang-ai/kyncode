@@ -1,0 +1,13 @@
+id: debug_004
+category: debug
+kind: code_change
+title: 修复字节解码编码错误
+prompt: '运行 pytest 会发现 test_work.py 失败：decode_utf8 处理非法字节时报错或返回错误结果。
+
+  阅读失败信息，修复解码逻辑（对无法解码的字节应能容错处理）。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

@@ -1,0 +1,13 @@
+id: tool_recovery_002
+category: tool_recovery
+kind: code_change
+title: 修复包内相对导入错误
+prompt: '运行 main.py 会报 ImportError：包 mypkg 内的模块用了错误的导入方式。
+
+  请把包内模块之间的导入改为正确的相对导入，使 main.py 正常运行。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

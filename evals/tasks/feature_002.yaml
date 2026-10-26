@@ -1,0 +1,17 @@
+id: feature_002
+category: feature
+kind: code_change
+title: 实现配置分层合并
+prompt: 'configmerge.py 里的 merge_configs 还没有实现。请实现它：
+
+  接收任意数量的配置字典（越靠后优先级越高），深度合并：
+
+  嵌套字典递归合并，非字典值用后者覆盖，返回全新字典且不改动入参。
+
+  不要改动已经实现的 to_env 函数。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

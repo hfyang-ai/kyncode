@@ -1,0 +1,15 @@
+id: parsing_001
+category: parsing
+kind: code_change
+title: 实现四则运算表达式求值
+prompt: 'evaluator.py 里的 evaluate 还没有实现。请实现它：
+
+  解析并计算只含整数、加减乘除和括号的表达式字符串，返回整数值。
+
+  注意运算符优先级和括号。不要改动已经实现的 tokenize 函数。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

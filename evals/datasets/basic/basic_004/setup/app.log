@@ -1,5 +1,0 @@
-2026-10-26 10:00:00 INFO server started
-2026-10-26 10:00:01 INFO request /health
-2026-10-26 10:00:02 ERROR failed to connect E503
-2026-10-26 10:00:03 INFO retry
-2026-10-26 10:00:04 ERROR timeout E504

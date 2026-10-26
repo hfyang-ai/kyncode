@@ -1,9 +1,21 @@
-"""数据驱动生成 50 道 KynCode 测评任务（幂等，可重复执行）。
+"""数据驱动生成 36 道 KynCode 高难度测评任务（幂等，可重复执行）。
 
 产物：
-- tasks/<task_id>.yaml         任务定义（prompt + 判分配置）
+- tasks/<task_id>.yaml         任务定义（prompt + 判分配置 + difficulty）
 - datasets/<category>/<task_id>/setup/  初始代码
 - datasets/<category>/<task_id>/tests/  隐藏测试（test_f2p_*.py / test_p2p_*.py）
+
+任务分布（全 difficulty=hard）：
+- bugfix 4          多文件复合 bug 定位根因（跨层类型污染 / 状态机 / 引用泄漏 / 递归边界）
+- feature 4         补全非平凡实现（任务调度器 / 配置合并 / 事件总线 / semver 比较）
+- refactor 3        跨文件重构保行为（策略模式 / 过程式转类 / 拆模块消循环依赖）
+- debug 4           失败测试驱动修复（快排分区 / 日期跨度 / 记忆化状态泄漏 / 编码）
+- tool_recovery 3   导入/环境错误恢复（三方循环导入 / 包内相对导入 / 弃用 API shim）
+- long_task 2       长任务（多模块迷你框架 + 长流水线交叉依赖）
+- algorithm 4       算法实现（拓扑排序 / 并查集 / 滑动窗口 / 区间合并）
+- concurrency 4     并发（线程安全计数器 / 线程安全 KV / asyncio 聚合 / 生产者消费者）
+- parsing 4         解析（表达式求值 / INI / 状态机 / CSV）
+- optimization 4    性能（两数之和 / 前缀和 / 斐波那契 / 有序去重，大数据量约束复杂度）
 
 运行：python scripts/generate_tasks.py
 """
@@ -21,428 +33,99 @@ TASKS_DIR = ROOT / "tasks"
 DATASETS_DIR = ROOT / "datasets"
 
 
-def _pkg(n_modules: int, bug: int | None = None) -> dict[str, str]:
-    """生成含 n_modules 个模块的包，用于长上下文任务。
+def _stages(n_stages: int, bug: int | list[int] | None = None, cross: bool = False) -> dict[str, str]:
+    """生成 n 个 stage 模块 + pipeline.py 组成的线性流水线。
 
-    每个模块 mod_XX.py 定义一个 func_XX(x) = x * XX。
-    bug 指定某个模块编号，该模块的乘数写成 999（明显错误），
-    用于让 agent 在多个文件里定位这一处错误。
+    每个 stage_XX.py 定义 transform(x)，正确行为是 x + XX。
+    bug 指定错误环节（int 或 list[int]），该环节 transform 写成 x * 2。
+    cross=True 时额外生成 cross.py，聚合 stage_00 与最后一个 stage。
     """
-    files: dict[str, str] = {"pkg/__init__.py": ""}
-    for i in range(n_modules):
-        mul = 999 if bug == i else i
-        files[f"pkg/mod_{i:02d}.py"] = f"def func_{i}(x):\n    return x * {mul}\n"
+    bugs: set[int] = set()
+    if isinstance(bug, int):
+        bugs = {bug}
+    elif bug:
+        bugs = set(bug)
+
+    files: dict[str, str] = {}
+    for i in range(n_stages):
+        if i in bugs:
+            body = "def transform(x):\n    return x * 2\n"
+        else:
+            body = f"def transform(x):\n    return x + {i}\n"
+        files[f"stage_{i:02d}.py"] = body
+
+    imports = "\n".join(
+        f"from stage_{i:02d} import transform as _t{i}" for i in range(n_stages)
+    )
+    steps = "\n".join(f"    x = _t{i}(x)" for i in range(n_stages))
+    files["pipeline.py"] = (
+        imports + "\n\n\n" + "def run(x):\n" + steps + "\n    return x\n"
+    )
+
+    if cross:
+        files["cross.py"] = (
+            "from stage_00 import transform as t0\n"
+            f"from stage_{n_stages - 1:02d} import transform as tlast\n\n\n"
+            "def aggregate(x):\n"
+            "    return t0(x) + tlast(x)\n"
+        )
     return files
 
 
-def _long_file(n_funcs: int, bug: int | None = None) -> str:
-    """生成长文件源码：n_funcs 个函数，bug 指定某个函数用错误乘数 999。"""
-    body: list[str] = []
-    for i in range(n_funcs):
-        mul = 999 if bug == i else i
-        body.append(f"def func_{i}(x):\n    return x * {mul}\n")
-    return "\n".join(body)
-
-
-# 每个任务：setup/tests 是 {文件名: 内容} 映射；answer_match 类 tests 为空。
+# 每个任务：setup/tests 是 {文件名: 内容} 映射。
 TASKS: list[dict[str, Any]] = [
     # =====================================================================
-    # basic —— 文件读取（answer_match，8 题）
-    # =====================================================================
-    {
-        "id": "basic_001",
-        "category": "basic",
-        "kind": "answer_match",
-        "title": "读取配置文件字段",
-        "prompt": (
-            "当前目录有一个 config.json。读取它，回答其中 `port` 字段的值。\n"
-            "只输出一个整数，不要任何解释。"
-        ),
-        "setup": {
-            "config.json": '{"app_name": "demo", "port": 8080, "debug": false, "db_host": "localhost"}\n',
-        },
-        "tests": {},
-        "grader": {"type": "answer_match", "answer_pattern": "8080"},
-    },
-    {
-        "id": "basic_002",
-        "category": "basic",
-        "kind": "answer_match",
-        "title": "统计多文件总行数",
-        "prompt": (
-            "data/ 目录下有 a.txt、b.txt、c.txt 三个文件。统计它们的总行数（空行也算一行）。\n"
-            "只输出一个整数。"
-        ),
-        "setup": {
-            "data/a.txt": "alpha\nbeta\n",
-            "data/b.txt": "one\ntwo\nthree\n",
-            "data/c.txt": "single\n",
-        },
-        "tests": {},
-        "grader": {"type": "answer_match", "answer_pattern": r"\b6\b"},
-    },
-    {
-        "id": "basic_003",
-        "category": "basic",
-        "kind": "answer_match",
-        "title": "从 README 找运行命令",
-        "prompt": (
-            "阅读 README.md，找出「运行测试」对应的命令。\n"
-            "只输出该命令本身，不要引号、不要解释。"
-        ),
-        "setup": {
-            "README.md": (
-                "# Demo\n\n## Install\n```\npip install -e .\n```\n\n"
-                "## Run tests\n```\npytest -q\n```\n\n## Run\n```\npython main.py\n```\n"
-            ),
-        },
-        "tests": {},
-        "grader": {"type": "answer_match", "answer_pattern": r"pytest"},
-    },
-    {
-        "id": "basic_004",
-        "category": "basic",
-        "kind": "answer_match",
-        "title": "从日志定位错误码",
-        "prompt": (
-            "app.log 里有若干行日志。找出第一条包含 ERROR 的行，回答它的错误码（形如 E123）。\n"
-            "只输出错误码。"
-        ),
-        "setup": {
-            "app.log": (
-                "2026-10-26 10:00:00 INFO server started\n"
-                "2026-10-26 10:00:01 INFO request /health\n"
-                "2026-10-26 10:00:02 ERROR failed to connect E503\n"
-                "2026-10-26 10:00:03 INFO retry\n"
-                "2026-10-26 10:00:04 ERROR timeout E504\n"
-            ),
-        },
-        "tests": {},
-        "grader": {"type": "answer_match", "answer_pattern": "E503"},
-    },
-    {
-        "id": "basic_005",
-        "category": "basic",
-        "kind": "answer_match",
-        "title": "读取深层嵌套文件",
-        "prompt": (
-            "在 src/pkg/deep/ 下有一个 settings.yaml。读取它，回答其中 `region` 的值。\n"
-            "只输出 region 的值。"
-        ),
-        "setup": {
-            "src/pkg/deep/settings.yaml": "region: ap-southeast-1\nreplicas: 3\n",
-            "src/pkg/__init__.py": "",
-        },
-        "tests": {},
-        "grader": {"type": "answer_match", "answer_pattern": "ap-southeast-1"},
-    },
-    {
-        "id": "basic_006",
-        "category": "basic",
-        "kind": "answer_match",
-        "title": "理解函数行为",
-        "prompt": (
-            "阅读 math_utils.py。调用 multiply(3, 4) 会返回什么？\n"
-            "只输出一个整数。"
-        ),
-        "setup": {
-            "math_utils.py": (
-                "def add(a, b):\n    return a + b\n\n\n"
-                "def subtract(a, b):\n    return a - b\n\n\n"
-                "def multiply(a, b):\n    return a * b\n"
-            ),
-        },
-        "tests": {},
-        "grader": {"type": "answer_match", "answer_pattern": r"\b12\b"},
-    },
-    {
-        "id": "basic_007",
-        "category": "basic",
-        "kind": "answer_match",
-        "title": "从 CSV 提取统计",
-        "prompt": (
-            "data.csv 的列是 name,age。找出 age 列的最大值。\n"
-            "只输出一个整数。"
-        ),
-        "setup": {
-            "data.csv": "name,age\nalice,30\nbob,25\ncarol,42\ndave,37\n",
-        },
-        "tests": {},
-        "grader": {"type": "answer_match", "answer_pattern": r"\b42\b"},
-    },
-    {
-        "id": "basic_008",
-        "category": "basic",
-        "kind": "answer_match",
-        "title": "总结模块职责",
-        "prompt": (
-            "阅读 handlers.py，用一句话说明 send_email 函数的作用。\n"
-            "回答必须包含「邮件」和「发送」两个词。"
-        ),
-        "setup": {
-            "handlers.py": (
-                "import smtplib\n\n\n"
-                "def send_email(to, subject, body):\n"
-                "    # connect to SMTP and dispatch an email message\n"
-                "    smtp = smtplib.SMTP('localhost')\n"
-                "    smtp.sendmail('noreply@x.com', to, f'{subject}\\n{body}')\n"
-            ),
-        },
-        "tests": {},
-        "grader": {"type": "answer_match", "answer_pattern": r"(?=.*邮件)(?=.*发送)"},
-    },
-    # =====================================================================
-    # basic —— 跨文件修改（code_change，7 题）
-    # =====================================================================
-    {
-        "id": "basic_009",
-        "category": "basic",
-        "kind": "code_change",
-        "title": "重命名函数并更新调用点",
-        "prompt": (
-            "calc.py 里定义了 foo 函数，main.py 调用了它。\n"
-            "把 foo 重命名为 add，并同步更新所有调用它的地方。不要改变函数行为。"
-        ),
-        "setup": {
-            "calc.py": "def foo(a, b):\n    return a + b\n",
-            "main.py": "from calc import foo\n\n\ndef run():\n    return foo(1, 2)\n",
-        },
-        "tests": {
-            "test_f2p_rename.py": (
-                "from calc import add\n\n\n"
-                "def test_add_renamed():\n"
-                "    assert add(1, 2) == 3\n\n\n"
-                "def test_foo_gone():\n"
-                "    import calc\n"
-                "    assert not hasattr(calc, 'foo')\n"
-            ),
-            "test_p2p_callers.py": (
-                "import main\n\n\n"
-                "def test_main_still_works():\n"
-                "    assert main.run() == 3\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "basic_010",
-        "category": "basic",
-        "kind": "code_change",
-        "title": "新增函数并在别处调用",
-        "prompt": (
-            "在 text.py 里新增一个 farewell(name) 函数，返回 'Goodbye, {name}!'。\n"
-            "然后在 app.py 里调用它打印 'Goodbye, World!'。"
-        ),
-        "setup": {
-            "text.py": "def greet(name):\n    return f'Hello, {name}!'\n",
-            "app.py": "from text import greet\n\nprint(greet('World'))\n",
-        },
-        "tests": {
-            "test_f2p_farewell.py": (
-                "from text import farewell\n\n\n"
-                "def test_farewell():\n"
-                "    assert farewell('World') == 'Goodbye, World!'\n"
-            ),
-            "test_p2p_greet.py": (
-                "from text import greet\n\n\n"
-                "def test_greet_unchanged():\n"
-                "    assert greet('World') == 'Hello, World!'\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "basic_011",
-        "category": "basic",
-        "kind": "code_change",
-        "title": "消除硬编码改用配置常量",
-        "prompt": (
-            "config.py 里定义了 PORT = 8000。server.py 里硬编码了 port = 8080。\n"
-            "修改 server.py，让它使用 config.py 的 PORT 常量。"
-        ),
-        "setup": {
-            "config.py": "PORT = 8000\nHOST = '0.0.0.0'\n",
-            "server.py": "port = 8080  # hardcoded, should use config.PORT\n\n\ndef get_port():\n    return port\n",
-        },
-        "tests": {
-            "test_f2p_config.py": (
-                "import server\nimport config\n\n\n"
-                "def test_port_from_config():\n"
-                "    assert server.get_port() == config.PORT\n\n\n"
-                "def test_port_value():\n"
-                "    assert server.get_port() == 8000\n"
-            ),
-            "test_p2p_config_constant.py": (
-                "import config\n\n\n"
-                "def test_config_unchanged():\n"
-                "    assert config.PORT == 8000\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "basic_012",
-        "category": "basic",
-        "kind": "code_change",
-        "title": "抽取重复代码到公共模块",
-        "prompt": (
-            "a.py 和 b.py 里都有一个 normalize 函数，实现完全相同（strip + 转小写）。\n"
-            "把它抽取到新建的 utils.py，并让 a.py、b.py 从 utils 导入使用。"
-        ),
-        "setup": {
-            "a.py": (
-                "def normalize(s):\n    return s.strip().lower()\n\n\n"
-                "def use_a():\n    return normalize('  AbC ')\n"
-            ),
-            "b.py": (
-                "def normalize(s):\n    return s.strip().lower()\n\n\n"
-                "def use_b():\n    return normalize('  XyZ ')\n"
-            ),
-        },
-        "tests": {
-            "test_f2p_utils.py": (
-                "import utils\n\n\n"
-                "def test_utils_has_normalize():\n"
-                "    assert utils.normalize('  Hi ') == 'hi'\n"
-            ),
-            "test_p2p_behavior.py": (
-                "import a, b\n\n\n"
-                "def test_a():\n"
-                "    assert a.use_a() == 'abc'\n\n\n"
-                "def test_b():\n"
-                "    assert b.use_b() == 'xyz'\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "basic_013",
-        "category": "basic",
-        "kind": "code_change",
-        "title": "修改接口签名并更新调用方",
-        "prompt": (
-            "api.py 的 get_user(user_id) 现在需要增加一个 include_avatar 参数（默认 True）。\n"
-            "更新 api.py 的签名，并同步更新 caller.py 里的调用，使其显式传 include_avatar=False。"
-        ),
-        "setup": {
-            "api.py": (
-                "def get_user(user_id):\n"
-                "    return {'id': user_id, 'name': 'Alice', 'avatar': 'a.png'}\n"
-            ),
-            "caller.py": (
-                "from api import get_user\n\n\n"
-                "def show():\n    u = get_user(1)\n    return u['name']\n"
-            ),
-        },
-        "tests": {
-            "test_f2p_signature.py": (
-                "import inspect\nfrom api import get_user\n\n\n"
-                "def test_has_include_avatar():\n"
-                "    sig = inspect.signature(get_user)\n"
-                "    assert 'include_avatar' in sig.parameters\n\n\n"
-                "def test_no_avatar():\n"
-                "    u = get_user(1, include_avatar=False)\n"
-                "    assert u['name'] == 'Alice'\n"
-            ),
-            "test_p2p_caller.py": (
-                "import caller\n\n\n"
-                "def test_caller():\n"
-                "    assert caller.show() == 'Alice'\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "basic_014",
-        "category": "basic",
-        "kind": "code_change",
-        "title": "移动常量到独立模块",
-        "prompt": (
-            "logic.py 里硬编码了 MAX_RETRY = 3。把它移到新建的 constants.py，\n"
-            "并让 logic.py 从 constants 导入使用。"
-        ),
-        "setup": {
-            "logic.py": (
-                "MAX_RETRY = 3\n\n\n"
-                "def attempts():\n    return MAX_RETRY\n"
-            ),
-        },
-        "tests": {
-            "test_f2p_constants.py": (
-                "import constants\nimport logic\n\n\n"
-                "def test_constant_moved():\n"
-                "    assert constants.MAX_RETRY == 3\n\n\n"
-                "def test_logic_uses_constant():\n"
-                "    assert logic.attempts() == constants.MAX_RETRY\n"
-            ),
-            "test_p2p_value.py": (
-                "import logic\n\n\n"
-                "def test_attempts():\n"
-                "    assert logic.attempts() == 3\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "basic_015",
-        "category": "basic",
-        "kind": "code_change",
-        "title": "补全类型注解且不改行为",
-        "prompt": (
-            "funcs.py 里的函数都没有类型注解。给每个函数的参数和返回值补上类型注解。\n"
-            "不要改变任何函数的行为。"
-        ),
-        "setup": {
-            "funcs.py": (
-                "def concat(a, b):\n    return a + b\n\n\n"
-                "def is_positive(n):\n    return n > 0\n"
-            ),
-        },
-        "tests": {
-            "test_f2p_annotations.py": (
-                "import inspect\nimport funcs\n\n\n"
-                "def test_concat_annotated():\n"
-                "    sig = inspect.signature(funcs.concat)\n"
-                "    assert sig.return_annotation is not inspect.Signature.empty\n\n\n"
-                "def test_is_positive_annotated():\n"
-                "    sig = inspect.signature(funcs.is_positive)\n"
-                "    assert sig.return_annotation is not inspect.Signature.empty\n"
-            ),
-            "test_p2p_behavior.py": (
-                "import funcs\n\n\n"
-                "def test_concat():\n"
-                "    assert funcs.concat('a', 'b') == 'ab'\n\n\n"
-                "def test_is_positive():\n"
-                "    assert funcs.is_positive(5) is True\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    # =====================================================================
-    # bugfix —— Bug 修复（code_change，10 题）
+    # bugfix —— 多文件复合 bug，跨层追根（4 题）
     # =====================================================================
     {
         "id": "bugfix_001",
         "category": "bugfix",
         "kind": "code_change",
-        "title": "修复除零错误",
+        "title": "跨层类型污染导致静默错误",
+        "difficulty": "hard",
         "prompt": (
-            "work.py 的 divide(a, b) 在 b 为 0 时会崩溃。\n"
-            "请修复它，使得当除数为 0 时返回 0，其余情况正常相除。"
+            "用户反馈：订单总价算出来明显不对，但程序没有报任何错误。\n"
+            "相关模块：inventory（库存定价）→ pricing（计价）→ order（汇总）。\n"
+            "请排查并修复根因，使订单总价返回正确的数值。"
         ),
         "setup": {
-            "work.py": "def divide(a, b):\n    return a / b\n",
+            "inventory.py": (
+                "def get_price(sku):\n"
+                "    return '20'\n\n\n"
+                "def get_name(sku):\n"
+                "    return 'Widget'\n"
+            ),
+            "pricing.py": (
+                "from inventory import get_price\n\n\n"
+                "def line_total(sku, qty):\n"
+                "    return get_price(sku) * qty\n\n\n"
+                "def format_currency(amount):\n"
+                "    return f'${amount:.2f}'\n"
+            ),
+            "order.py": (
+                "from pricing import line_total\n\n\n"
+                "def order_total(items):\n"
+                "    total = 0\n"
+                "    for sku, qty in items:\n"
+                "        total += line_total(sku, qty)\n"
+                "    return total\n"
+            ),
         },
         "tests": {
-            "test_f2p_zero.py": (
-                "from work import divide\n\n\n"
-                "def test_divide_by_zero():\n"
-                "    assert divide(10, 0) == 0\n"
+            "test_f2p_total.py": (
+                "from order import order_total\n\n\n"
+                "def test_two_items():\n"
+                "    assert order_total([('a', 2), ('b', 1)]) == 60\n\n\n"
+                "def test_single():\n"
+                "    assert order_total([('a', 1)]) == 20\n"
             ),
-            "test_p2p_normal.py": (
-                "from work import divide\n\n\n"
-                "def test_divide_normal():\n"
-                "    assert divide(10, 2) == 5\n"
+            "test_p2p_misc.py": (
+                "from pricing import format_currency\n"
+                "from inventory import get_name\n\n\n"
+                "def test_format():\n"
+                "    assert format_currency(20) == '$20.00'\n\n\n"
+                "def test_name():\n"
+                "    assert get_name('a') == 'Widget'\n"
             ),
         },
         "grader": {"type": "fail_to_pass"},
@@ -451,24 +134,59 @@ TASKS: list[dict[str, Any]] = [
         "id": "bugfix_002",
         "category": "bugfix",
         "kind": "code_change",
-        "title": "修复 off-by-one",
+        "title": "订单状态机非法转换未拦截",
+        "difficulty": "hard",
         "prompt": (
-            "work.py 的 last(items) 想返回列表最后一个元素，但现在会抛 IndexError。\n"
-            "请修复索引错误，使其正确返回最后一个元素。"
+            "订单系统有状态机：pending → paid → shipped → delivered。\n"
+            "业务规则：只能沿这条路径前进；cancel 只允许在 pending 或 paid 状态；"
+            "已 delivered 的订单不能再做任何转换。\n"
+            "用户反馈：一个已经 delivered 的订单居然还能被 cancel。\n"
+            "请排查状态机的转换逻辑并修复，使所有非法转换都被拒绝。"
         ),
         "setup": {
-            "work.py": "def last(items):\n    return items[len(items)]\n",
+            "order_state.py": (
+                "ALLOWED = {\n"
+                "    'pending': ['paid', 'cancel'],\n"
+                "    'paid': ['shipped', 'cancel'],\n"
+                "    'shipped': ['delivered'],\n"
+                "    'delivered': [],\n"
+                "    'cancel': [],\n"
+                "}\n\n\n"
+                "def can_transition(from_state, to_state):\n"
+                "    return to_state in ALLOWED.get(from_state, [])\n\n\n"
+                "def display(state):\n"
+                "    return state.upper()\n"
+            ),
+            "order.py": (
+                "from order_state import can_transition\n\n\n"
+                "def advance(state, target):\n"
+                "    if can_transition(state, target):\n"
+                "        return target\n"
+                "    return state\n\n\n"
+                "def cancel(state):\n"
+                "    if state != 'delivered':\n"
+                "        return 'cancel'\n"
+                "    return state\n"
+            ),
         },
         "tests": {
-            "test_f2p_last.py": (
-                "from work import last\n\n\n"
-                "def test_last():\n"
-                "    assert last([1, 2, 3]) == 3\n"
+            "test_f2p_transition.py": (
+                "from order import advance, cancel\n\n\n"
+                "def test_legal_path():\n"
+                "    assert advance('pending', 'paid') == 'paid'\n"
+                "    assert advance('paid', 'shipped') == 'shipped'\n\n\n"
+                "def test_delivered_cannot_cancel():\n"
+                "    assert cancel('delivered') == 'delivered'\n\n\n"
+                "def test_shipped_cannot_cancel():\n"
+                "    assert cancel('shipped') == 'shipped'\n\n\n"
+                "def test_illegal_advance_rejected():\n"
+                "    assert advance('pending', 'shipped') == 'pending'\n"
+                "    assert advance('cancel', 'paid') == 'cancel'\n"
             ),
-            "test_p2p_single.py": (
-                "from work import last\n\n\n"
-                "def test_last_single():\n"
-                "    assert last(['a']) == 'a'\n"
+            "test_p2p_display.py": (
+                "from order_state import display\n\n\n"
+                "def test_display():\n"
+                "    assert display('pending') == 'PENDING'\n"
             ),
         },
         "grader": {"type": "fail_to_pass"},
@@ -477,24 +195,50 @@ TASKS: list[dict[str, Any]] = [
         "id": "bugfix_003",
         "category": "bugfix",
         "kind": "code_change",
-        "title": "修复重复次数少一",
+        "title": "缓存返回内部引用被外部篡改",
+        "difficulty": "hard",
         "prompt": (
-            "work.py 的 repeat(s, n) 应该把字符串 s 重复 n 次，但现在少重复了一次。\n"
-            "请修复。"
+            "配置中心维护一个配置字典，get() 会缓存读取结果。\n"
+            "用户反馈：某个调用方修改了拿到的配置后，其他调用方读到的值也被污染了。\n"
+            "请排查引用/拷贝问题并修复，使每次 get() 返回独立副本、互不影响。"
         ),
         "setup": {
-            "work.py": "def repeat(s, n):\n    return s * (n - 1)\n",
+            "config_store.py": (
+                "_cache = {}\n\n\n"
+                "def load(key):\n"
+                "    return {'name': 'svc', 'tags': ['a', 'b']}\n\n\n"
+                "def get(key):\n"
+                "    if key not in _cache:\n"
+                "        _cache[key] = load(key)\n"
+                "    return _cache[key]\n"
+            ),
+            "consumer.py": (
+                "from config_store import get\n\n\n"
+                "def snapshot(key):\n"
+                "    cfg = get(key)\n"
+                "    return {'name': cfg['name'], 'tags': list(cfg['tags'])}\n"
+            ),
         },
         "tests": {
-            "test_f2p_repeat.py": (
-                "from work import repeat\n\n\n"
-                "def test_repeat_three():\n"
-                "    assert repeat('ab', 3) == 'ababab'\n"
+            "test_f2p_isolation.py": (
+                "from config_store import get\n\n\n"
+                "def test_no_pollution():\n"
+                "    a = get('svc')\n"
+                "    a['tags'].append('polluted')\n"
+                "    b = get('svc')\n"
+                "    assert b['tags'] == ['a', 'b']\n\n\n"
+                "def test_top_level_independent():\n"
+                "    a = get('svc')\n"
+                "    a['name'] = 'changed'\n"
+                "    b = get('svc')\n"
+                "    assert b['name'] == 'svc'\n"
             ),
-            "test_p2p_repeat_one.py": (
-                "from work import repeat\n\n\n"
-                "def test_repeat_once():\n"
-                "    assert repeat('x', 1) == 'x'\n"
+            "test_p2p_consumer.py": (
+                "from consumer import snapshot\n\n\n"
+                "def test_snapshot():\n"
+                "    s = snapshot('svc')\n"
+                "    assert s['name'] == 'svc'\n"
+                "    assert s['tags'] == ['a', 'b']\n"
             ),
         },
         "grader": {"type": "fail_to_pass"},
@@ -503,802 +247,313 @@ TASKS: list[dict[str, Any]] = [
         "id": "bugfix_004",
         "category": "bugfix",
         "kind": "code_change",
-        "title": "修复空列表边界",
+        "title": "目录统计漏算子目录",
+        "difficulty": "hard",
         "prompt": (
-            "work.py 的 first(items) 在 items 为空时会抛 IndexError。\n"
-            "请修复，使得空列表时返回 None，其余情况返回第一个元素。"
+            "filesystem.total_size 用于递归统计一个目录树里所有文件的大小之和。\n"
+            "用户反馈：包含嵌套子目录的目录统计结果偏小。\n"
+            "请排查递归遍历逻辑并修复，正确处理多层嵌套目录。"
         ),
         "setup": {
-            "work.py": "def first(items):\n    return items[0]\n",
-        },
-        "tests": {
-            "test_f2p_empty.py": (
-                "from work import first\n\n\n"
-                "def test_first_empty():\n"
-                "    assert first([]) is None\n"
-            ),
-            "test_p2p_nonempty.py": (
-                "from work import first\n\n\n"
-                "def test_first_nonempty():\n"
-                "    assert first([1, 2]) == 1\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "bugfix_005",
-        "category": "bugfix",
-        "kind": "code_change",
-        "title": "修复字符串相加而非数值相加",
-        "prompt": (
-            "work.py 的 parse_and_add(a, b) 接收数字，但当传入字符串 '1'、'2' 时\n"
-            "会做字符串拼接返回 '12'。请修复，使其把输入转成数值再相加。"
-        ),
-        "setup": {
-            "work.py": "def parse_and_add(a, b):\n    return a + b\n",
-        },
-        "tests": {
-            "test_f2p_str_input.py": (
-                "from work import parse_and_add\n\n\n"
-                "def test_add_strings_as_numbers():\n"
-                "    assert parse_and_add('1', '2') == 3\n"
-            ),
-            "test_p2p_int_input.py": (
-                "from work import parse_and_add\n\n\n"
-                "def test_add_ints():\n"
-                "    assert parse_and_add(1, 2) == 3\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "bugfix_006",
-        "category": "bugfix",
-        "kind": "code_change",
-        "title": "修复边界比较符号",
-        "prompt": (
-            "work.py 的 is_adult(age) 判断是否成年，但当前 18 岁被判断为未成年。\n"
-            "请修复比较符号，使 18 岁及以上算成年。"
-        ),
-        "setup": {
-            "work.py": "def is_adult(age):\n    return age > 18\n",
-        },
-        "tests": {
-            "test_f2p_boundary.py": (
-                "from work import is_adult\n\n\n"
-                "def test_is_adult_at_18():\n"
-                "    assert is_adult(18) is True\n"
-            ),
-            "test_p2p_other.py": (
-                "from work import is_adult\n\n\n"
-                "def test_20_is_adult():\n"
-                "    assert is_adult(20) is True\n\n\n"
-                "def test_17_not_adult():\n"
-                "    assert is_adult(17) is False\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "bugfix_007",
-        "category": "bugfix",
-        "kind": "code_change",
-        "title": "修复排序方向",
-        "prompt": (
-            "work.py 的 sorted_desc(items) 应该返回降序结果，但现在返回了升序。\n"
-            "请修复。"
-        ),
-        "setup": {
-            "work.py": "def sorted_desc(items):\n    return sorted(items)\n",
-        },
-        "tests": {
-            "test_f2p_desc.py": (
-                "from work import sorted_desc\n\n\n"
-                "def test_sorted_desc():\n"
-                "    assert sorted_desc([1, 3, 2]) == [3, 2, 1]\n"
-            ),
-            "test_p2p_empty.py": (
-                "from work import sorted_desc\n\n\n"
-                "def test_sorted_empty():\n"
-                "    assert sorted_desc([]) == []\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "bugfix_008",
-        "category": "bugfix",
-        "kind": "code_change",
-        "title": "修复字典键硬编码",
-        "prompt": (
-            "work.py 的 get_value(d, key) 应该返回 d[key]，但现在错误地写死了键名 'key'。\n"
-            "请修复，使其使用传入的 key 参数。"
-        ),
-        "setup": {
-            "work.py": "def get_value(d, key):\n    return d['key']\n",
-        },
-        "tests": {
-            "test_f2p_key.py": (
-                "from work import get_value\n\n\n"
-                "def test_get_by_param():\n"
-                "    assert get_value({'x': 1}, 'x') == 1\n"
-            ),
-            "test_p2p_other_key.py": (
-                "from work import get_value\n\n\n"
-                "def test_get_other_key():\n"
-                "    assert get_value({'a': 2}, 'a') == 2\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "bugfix_009",
-        "category": "bugfix",
-        "kind": "code_change",
-        "title": "修复正则匹配错误",
-        "prompt": (
-            "work.py 的 extract_digits(s) 应该用正则提取字符串里的所有数字，\n"
-            "但现在错误地匹配了字母。请修复正则。"
-        ),
-        "setup": {
-            "work.py": (
-                "import re\n\n\n"
-                "def extract_digits(s):\n    return re.findall(r'[a-z]+', s)\n"
+            "filesystem.py": (
+                "def walk(entries):\n"
+                "    for entry in entries:\n"
+                "        if entry['type'] == 'file':\n"
+                "            yield entry\n\n\n"
+                "def total_size(entries):\n"
+                "    files = walk(entries)\n"
+                "    return sum(f['size'] for f in files)\n\n\n"
+                "def count_files(entries):\n"
+                "    return sum(1 for _ in walk(entries))\n"
             ),
         },
         "tests": {
-            "test_f2p_digits.py": (
-                "from work import extract_digits\n\n\n"
-                "def test_extract_digits():\n"
-                "    assert extract_digits('abc123') == ['123']\n"
+            "test_f2p_size.py": (
+                "from filesystem import total_size\n\n\n"
+                "def test_nested():\n"
+                "    tree = [\n"
+                "        {'type': 'dir', 'children': [\n"
+                "            {'type': 'file', 'size': 10},\n"
+                "            {'type': 'dir', 'children': [{'type': 'file', 'size': 5}]},\n"
+                "        ]},\n"
+                "        {'type': 'file', 'size': 7},\n"
+                "    ]\n"
+                "    assert total_size(tree) == 22\n\n\n"
+                "def test_empty_dir():\n"
+                "    assert total_size([{'type': 'dir', 'children': []}]) == 0\n"
             ),
-            "test_p2p_no_digits.py": (
-                "from work import extract_digits\n\n\n"
-                "def test_no_digits():\n"
-                "    assert extract_digits('xyz') == []\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "bugfix_010",
-        "category": "bugfix",
-        "kind": "code_change",
-        "title": "修复路径拼接",
-        "prompt": (
-            "work.py 的 config_path(dir) 用字符串 '+' 拼接路径，导致结尾斜杠时出现双斜杠。\n"
-            "请改用 os.path.join 拼接。"
-        ),
-        "setup": {
-            "work.py": "def config_path(dir):\n    return dir + '/config.yaml'\n",
-        },
-        "tests": {
-            "test_f2p_trailing_slash.py": (
-                "from work import config_path\n\n\n"
-                "def test_trailing_slash():\n"
-                "    assert config_path('/etc/') == '/etc/config.yaml'\n"
-            ),
-            "test_p2p_plain.py": (
-                "from work import config_path\n\n\n"
-                "def test_plain():\n"
-                "    assert config_path('/etc') == '/etc/config.yaml'\n"
+            "test_p2p_count.py": (
+                "from filesystem import count_files\n\n\n"
+                "def test_count():\n"
+                "    tree = [{'type': 'file', 'size': 1}, {'type': 'file', 'size': 2}]\n"
+                "    assert count_files(tree) == 2\n"
             ),
         },
         "grader": {"type": "fail_to_pass"},
     },
     # =====================================================================
-    # bugfix —— 测试失败处理（code_change，5 题）
+    # feature —— 补全非平凡实现（4 题）
     # =====================================================================
     {
-        "id": "bugfix_011",
-        "category": "bugfix",
+        "id": "feature_001",
+        "category": "feature",
         "kind": "code_change",
-        "title": "根据失败测试修复逻辑",
+        "title": "实现任务调度器（拓扑排序）",
+        "difficulty": "hard",
         "prompt": (
-            "运行 pytest 会发现 test_work.py 失败。阅读失败信息，修复 work.py 中的逻辑错误，\n"
-            "使所有测试通过。"
+            "scheduler.py 里的 schedule 还没有实现。请实现它：\n"
+            "输入是任务列表 tasks（每个是 (name, [依赖任务名])）和依赖关系。\n"
+            "返回一个合法的执行顺序列表；若存在循环依赖，抛 ValueError。\n"
+            "不要改动已经实现的 has_cycle 函数。"
         ),
         "setup": {
-            "work.py": "def average(nums):\n    return sum(nums) / len(nums) + 1\n",
-            "test_work.py": (
-                "from work import average\n\n\n"
-                "def test_average():\n"
-                "    assert average([2, 4, 6]) == 4\n"
+            "scheduler.py": (
+                "def has_cycle(tasks):\n"
+                "    return False\n\n\n"
+                "def schedule(tasks):\n"
+                "    raise NotImplementedError\n"
             ),
         },
         "tests": {
-            "test_f2p_average.py": (
-                "from work import average\n\n\n"
-                "def test_average_fixed():\n"
-                "    assert average([2, 4, 6]) == 4\n\n\n"
-                "def test_average_other():\n"
-                "    assert average([1, 2, 3]) == 2\n"
-            ),
-            "test_p2p_empty_guard.py": (
-                "from work import average\n\n\n"
-                "def test_average_single():\n"
-                "    assert average([7]) == 7\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "bugfix_012",
-        "category": "bugfix",
-        "kind": "code_change",
-        "title": "修复返回值类型",
-        "prompt": (
-            "运行 pytest 会发现 test_work.py 失败：函数返回了字符串而非整数。\n"
-            "阅读失败信息，修复 work.py 的返回值类型。"
-        ),
-        "setup": {
-            "work.py": "def square(n):\n    return str(n * n)\n",
-            "test_work.py": (
-                "from work import square\n\n\n"
-                "def test_square_type():\n"
-                "    assert square(3) == 9\n"
-                "    assert isinstance(square(3), int)\n"
-            ),
-        },
-        "tests": {
-            "test_f2p_square.py": (
-                "from work import square\n\n\n"
-                "def test_square_int():\n"
-                "    assert square(3) == 9\n\n\n"
-                "def test_square_is_int():\n"
-                "    assert isinstance(square(4), int)\n"
-            ),
-            "test_p2p_zero.py": (
-                "from work import square\n\n\n"
-                "def test_square_zero():\n"
-                "    assert square(0) == 0\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "bugfix_013",
-        "category": "bugfix",
-        "kind": "code_change",
-        "title": "修复异常处理缺失",
-        "prompt": (
-            "运行 pytest 会发现 test_work.py 失败：parse_int 遇到非法输入时应抛 ValueError，\n"
-            "但现在静默返回了 0。阅读失败信息修复。"
-        ),
-        "setup": {
-            "work.py": "def parse_int(s):\n    try:\n        return int(s)\n    except ValueError:\n        return 0\n",
-            "test_work.py": (
-                "import pytest\nfrom work import parse_int\n\n\n"
-                "def test_parse_raises():\n"
+            "test_f2p_schedule.py": (
+                "import pytest\n"
+                "from scheduler import schedule\n\n\n"
+                "def test_linear():\n"
+                "    tasks = {'a': [], 'b': ['a'], 'c': ['b']}\n"
+                "    order = schedule(tasks)\n"
+                "    assert order.index('a') < order.index('b') < order.index('c')\n\n\n"
+                "def test_branch():\n"
+                "    tasks = {'a': [], 'b': ['a'], 'c': ['a'], 'd': ['b', 'c']}\n"
+                "    order = schedule(tasks)\n"
+                "    assert order.index('a') < order.index('d')\n"
+                "    assert order.index('b') < order.index('d')\n"
+                "    assert order.index('c') < order.index('d')\n\n\n"
+                "def test_cycle():\n"
+                "    tasks = {'a': ['b'], 'b': ['a']}\n"
                 "    with pytest.raises(ValueError):\n"
-                "        parse_int('abc')\n"
+                "        schedule(tasks)\n"
             ),
-        },
-        "tests": {
-            "test_f2p_raises.py": (
-                "import pytest\nfrom work import parse_int\n\n\n"
-                "def test_parse_raises():\n"
-                "    with pytest.raises(ValueError):\n"
-                "        parse_int('abc')\n"
-            ),
-            "test_p2p_valid.py": (
-                "from work import parse_int\n\n\n"
-                "def test_parse_valid():\n"
-                "    assert parse_int('42') == 42\n"
+            "test_p2p_has_cycle.py": (
+                "from scheduler import has_cycle\n\n\n"
+                "def test_has_cycle_false():\n"
+                "    assert has_cycle({}) is False\n"
             ),
         },
         "grader": {"type": "fail_to_pass"},
     },
     {
-        "id": "bugfix_014",
-        "category": "bugfix",
+        "id": "feature_002",
+        "category": "feature",
         "kind": "code_change",
-        "title": "修复边界值处理",
+        "title": "实现配置分层合并",
+        "difficulty": "hard",
         "prompt": (
-            "运行 pytest 会发现 test_work.py 失败：clamp 在 value 超过上界 hi 时\n"
-            "错误地返回了下界 lo。阅读失败信息修复边界处理。"
+            "configmerge.py 里的 merge_configs 还没有实现。请实现它：\n"
+            "接收任意数量的配置字典（越靠后优先级越高），深度合并：\n"
+            "嵌套字典递归合并，非字典值用后者覆盖，返回全新字典且不改动入参。\n"
+            "不要改动已经实现的 to_env 函数。"
         ),
         "setup": {
-            "work.py": (
-                "def clamp(value, lo, hi):\n"
-                "    if value < lo:\n"
-                "        return lo\n"
-                "    if value > hi:\n"
-                "        return lo\n"
-                "    return value\n"
-            ),
-            "test_work.py": (
-                "from work import clamp\n\n\n"
-                "def test_clamp_upper():\n"
-                "    assert clamp(20, 0, 10) == 10\n"
+            "configmerge.py": (
+                "def to_env(prefix, cfg):\n"
+                "    return {f'{prefix}_{k}': v for k, v in cfg.items()}\n\n\n"
+                "def merge_configs(*configs):\n"
+                "    raise NotImplementedError\n"
             ),
         },
         "tests": {
-            "test_f2p_clamp.py": (
-                "from work import clamp\n\n\n"
-                "def test_clamp_upper():\n"
-                "    assert clamp(20, 0, 10) == 10\n\n\n"
-                "def test_clamp_lower():\n"
-                "    assert clamp(-5, 0, 10) == 0\n"
+            "test_f2p_merge.py": (
+                "from configmerge import merge_configs\n\n\n"
+                "def test_deep():\n"
+                "    base = {'db': {'host': 'localhost', 'port': 5432}, 'debug': False}\n"
+                "    prod = {'db': {'host': 'db.prod', 'pool': 10}, 'debug': True}\n"
+                "    merged = merge_configs(base, prod)\n"
+                "    assert merged == {'db': {'host': 'db.prod', 'port': 5432, 'pool': 10}, 'debug': True}\n\n\n"
+                "def test_no_mutate():\n"
+                "    base = {'db': {'host': 'a'}}\n"
+                "    override = {'db': {'port': 1}}\n"
+                "    merge_configs(base, override)\n"
+                "    assert base == {'db': {'host': 'a'}}\n\n\n"
+                "def test_three_layers():\n"
+                "    a = {'x': 1}\n"
+                "    b = {'x': 2, 'y': 3}\n"
+                "    c = {'z': 4}\n"
+                "    assert merge_configs(a, b, c) == {'x': 2, 'y': 3, 'z': 4}\n"
             ),
-            "test_p2p_mid.py": (
-                "from work import clamp\n\n\n"
-                "def test_clamp_mid():\n"
-                "    assert clamp(5, 0, 10) == 5\n"
+            "test_p2p_to_env.py": (
+                "from configmerge import to_env\n\n\n"
+                "def test_to_env():\n"
+                "    assert to_env('APP', {'a': 1}) == {'APP_a': 1}\n"
             ),
         },
         "grader": {"type": "fail_to_pass"},
     },
     {
-        "id": "bugfix_015",
-        "category": "bugfix",
+        "id": "feature_003",
+        "category": "feature",
         "kind": "code_change",
-        "title": "修复浮点精度",
+        "title": "实现事件总线",
+        "difficulty": "hard",
         "prompt": (
-            "运行 pytest 会发现 test_work.py 失败：sum_to_n 使用浮点累加导致精度误差。\n"
-            "阅读失败信息，改用不会丢失精度的方式计算。"
+            "bus.py 里的 EventBus 还没有实现。请实现它：\n"
+            "- on(event, handler) 注册处理器，返回取消订阅函数\n"
+            "- once(event, handler) 只触发一次的处理器\n"
+            "- emit(event, *args) 触发该事件所有处理器，按注册顺序调用\n"
+            "不要改动已经实现的 normalize 函数。"
         ),
         "setup": {
-            "work.py": "def sum_to_n(n):\n    total = 0.0\n    for i in range(1, n + 1):\n        total += 0.1\n    return total\n",
-            "test_work.py": (
-                "from work import sum_to_n\n\n\n"
-                "def test_sum_to_n():\n"
-                "    assert sum_to_n(10) == 1.0\n"
+            "bus.py": (
+                "def normalize(event):\n"
+                "    return event.strip().lower()\n\n\n"
+                "class EventBus:\n"
+                "    def __init__(self):\n"
+                "        raise NotImplementedError\n\n"
+                "    def on(self, event, handler):\n"
+                "        raise NotImplementedError\n\n"
+                "    def once(self, event, handler):\n"
+                "        raise NotImplementedError\n\n"
+                "    def emit(self, event, *args):\n"
+                "        raise NotImplementedError\n"
             ),
         },
         "tests": {
-            "test_f2p_sum.py": (
-                "from work import sum_to_n\n\n\n"
-                "def test_sum_to_n():\n"
-                "    assert sum_to_n(10) == 1.0\n"
+            "test_f2p_bus.py": (
+                "from bus import EventBus\n\n\n"
+                "def test_on_emit():\n"
+                "    b = EventBus()\n"
+                "    got = []\n"
+                "    b.on('save', lambda x: got.append(x))\n"
+                "    b.emit('save', 42)\n"
+                "    assert got == [42]\n\n\n"
+                "def test_once():\n"
+                "    b = EventBus()\n"
+                "    got = []\n"
+                "    b.once('init', lambda: got.append(1))\n"
+                "    b.emit('init')\n"
+                "    b.emit('init')\n"
+                "    assert got == [1]\n\n\n"
+                "def test_unsubscribe():\n"
+                "    b = EventBus()\n"
+                "    got = []\n"
+                "    off = b.on('tick', lambda: got.append(1))\n"
+                "    off()\n"
+                "    b.emit('tick')\n"
+                "    assert got == []\n\n\n"
+                "def test_order():\n"
+                "    b = EventBus()\n"
+                "    order = []\n"
+                "    b.on('x', lambda: order.append(1))\n"
+                "    b.on('x', lambda: order.append(2))\n"
+                "    b.emit('x')\n"
+                "    assert order == [1, 2]\n"
             ),
-            "test_p2p_zero.py": (
-                "from work import sum_to_n\n\n\n"
-                "def test_sum_zero():\n"
-                "    assert sum_to_n(0) == 0.0\n"
+            "test_p2p_normalize.py": (
+                "from bus import normalize\n\n\n"
+                "def test_normalize():\n"
+                "    assert normalize('  Save ') == 'save'\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "feature_004",
+        "category": "feature",
+        "kind": "code_change",
+        "title": "实现语义化版本比较器",
+        "difficulty": "hard",
+        "prompt": (
+            "semver.py 里的 compare 还没有实现。请实现它：\n"
+            "比较两个语义化版本字符串 'major.minor.patch'，返回 -1/0/1。\n"
+            "不要改动已经实现的 parse 函数。"
+        ),
+        "setup": {
+            "semver.py": (
+                "def parse(version):\n"
+                "    return tuple(int(x) for x in version.split('.'))\n\n\n"
+                "def compare(v1, v2):\n"
+                "    raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_compare.py": (
+                "from semver import compare\n\n\n"
+                "def test_equal():\n"
+                "    assert compare('1.2.3', '1.2.3') == 0\n\n\n"
+                "def test_less():\n"
+                "    assert compare('1.2.3', '1.2.4') == -1\n"
+                "    assert compare('1.9.0', '2.0.0') == -1\n\n\n"
+                "def test_greater():\n"
+                "    assert compare('2.0.0', '1.9.9') == 1\n"
+                "    assert compare('1.2.10', '1.2.9') == 1\n"
+            ),
+            "test_p2p_parse.py": (
+                "from semver import parse\n\n\n"
+                "def test_parse():\n"
+                "    assert parse('10.20.30') == (10, 20, 30)\n"
             ),
         },
         "grader": {"type": "fail_to_pass"},
     },
     # =====================================================================
-    # tool_error —— 工具错误恢复（5 题）
-    # =====================================================================
-    {
-        "id": "tool_error_001",
-        "category": "tool_error",
-        "kind": "answer_match",
-        "title": "文件不存在时查找正确文件",
-        "prompt": (
-            "读取 config.json 中 version 字段的值。如果 config.json 不存在，\n"
-            "用 ls 或 Glob 列出当前目录，找到实际存在的配置文件再读。\n"
-            "只输出 version 的值。"
-        ),
-        "setup": {"actual_config.json": '{"version": "2.1.0"}\n'},
-        "tests": {},
-        "grader": {"type": "answer_match", "answer_pattern": "2.1.0"},
-    },
-    {
-        "id": "tool_error_002",
-        "category": "tool_error",
-        "kind": "code_change",
-        "title": "从语法错误恢复",
-        "prompt": (
-            "运行 pytest 会报语法错误（SyntaxError）。阅读报错信息，修复 work.py 的语法错误，\n"
-            "使测试通过。"
-        ),
-        "setup": {
-            "work.py": "def add(a, b)\n    return a + b\n",
-            "test_work.py": (
-                "from work import add\n\n\n"
-                "def test_add():\n"
-                "    assert add(1, 2) == 3\n"
-            ),
-        },
-        "tests": {
-            "test_f2p_add.py": (
-                "from work import add\n\n\n"
-                "def test_add():\n"
-                "    assert add(1, 2) == 3\n"
-            ),
-            "test_p2p_add2.py": (
-                "from work import add\n\n\n"
-                "def test_add_other():\n"
-                "    assert add(4, 5) == 9\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "tool_error_003",
-        "category": "tool_error",
-        "kind": "code_change",
-        "title": "从导入错误恢复",
-        "prompt": (
-            "运行 main.py 会报 ModuleNotFoundError：找不到模块 utls。\n"
-            "实际模块文件叫 utils.py。修复 main.py 的导入错误。"
-        ),
-        "setup": {
-            "utils.py": "def helper():\n    return 42\n",
-            "main.py": "from utls import helper\n\n\ndef run():\n    return helper()\n",
-        },
-        "tests": {
-            "test_f2p_import.py": (
-                "import main\n\n\n"
-                "def test_run():\n"
-                "    assert main.run() == 42\n"
-            ),
-            "test_p2p_utils.py": (
-                "from utils import helper\n\n\n"
-                "def test_helper():\n"
-                "    assert helper() == 42\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "tool_error_004",
-        "category": "tool_error",
-        "kind": "code_change",
-        "title": "从属性错误恢复",
-        "prompt": (
-            "运行 main.py 会报 AttributeError：Calc 对象没有 subtract 方法。\n"
-            "实际方法叫 add。修复 main.py 的调用错误。"
-        ),
-        "setup": {
-            "calc.py": "class Calc:\n    def add(self, a, b):\n        return a + b\n",
-            "main.py": (
-                "from calc import Calc\n\n\n"
-                "def run():\n"
-                "    c = Calc()\n"
-                "    return c.subtract(1, 2)\n"
-            ),
-        },
-        "tests": {
-            "test_f2p_call.py": (
-                "import main\n\n\n"
-                "def test_run():\n"
-                "    assert main.run() == 3\n"
-            ),
-            "test_p2p_calc.py": (
-                "from calc import Calc\n\n\n"
-                "def test_add():\n"
-                "    assert Calc().add(1, 2) == 3\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "tool_error_005",
-        "category": "tool_error",
-        "kind": "code_change",
-        "title": "从键错误恢复",
-        "prompt": (
-            "运行 main.py 会报 KeyError：字典里没有 'age' 键。\n"
-            "阅读报错信息，修复 main.py 使其不再崩溃并正确返回 name 的值。"
-        ),
-        "setup": {
-            "config.py": "DATA = {'name': 'alice'}\n",
-            "main.py": (
-                "from config import DATA\n\n\n"
-                "def run():\n"
-                "    return DATA['age']\n"
-            ),
-        },
-        "tests": {
-            "test_f2p_key.py": (
-                "import main\n\n\n"
-                "def test_run():\n"
-                "    assert main.run() == 'alice'\n"
-            ),
-            "test_p2p_config.py": (
-                "from config import DATA\n\n\n"
-                "def test_data():\n"
-                "    assert DATA['name'] == 'alice'\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    # =====================================================================
-    # long_context —— 长上下文（10 题）
-    # =====================================================================
-    {
-        "id": "long_context_001",
-        "category": "long_context",
-        "kind": "code_change",
-        "title": "多文件包中定位错误函数",
-        "prompt": (
-            "pkg 包里有 12 个模块 mod_00 到 mod_11，每个定义一个 func_XX(x) = x * XX。\n"
-            "其中有一个模块把乘数错写成了 999。找出并修复这个错误。"
-        ),
-        "setup": {**_pkg(12, bug=7)},
-        "tests": {
-            "test_f2p_locate.py": (
-                "from pkg.mod_07 import func_7\n\n\n"
-                "def test_func_7_fixed():\n"
-                "    assert func_7(2) == 14\n"
-            ),
-            "test_p2p_others.py": (
-                "from pkg.mod_03 import func_3\n"
-                "from pkg.mod_11 import func_11\n\n\n"
-                "def test_func_3():\n"
-                "    assert func_3(2) == 6\n\n\n"
-                "def test_func_11():\n"
-                "    assert func_11(2) == 22\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "long_context_002",
-        "category": "long_context",
-        "kind": "answer_match",
-        "title": "追踪跨模块调用链",
-        "prompt": (
-            "有 a.py、b.py、c.py、d.py 四个模块形成调用链 a -> b -> c -> d。\n"
-            "func_d 被哪个模块直接调用？只输出模块名（不含 .py）。"
-        ),
-        "setup": {
-            "a.py": "from b import func_b\n\n\ndef func_a():\n    return func_b()\n",
-            "b.py": "from c import func_c\n\n\ndef func_b():\n    return func_c()\n",
-            "c.py": "from d import func_d\n\n\ndef func_c():\n    return func_d()\n",
-            "d.py": "def func_d():\n    return 'leaf'\n",
-        },
-        "tests": {},
-        "grader": {"type": "answer_match", "answer_pattern": r"\bc\b"},
-    },
-    {
-        "id": "long_context_003",
-        "category": "long_context",
-        "kind": "code_change",
-        "title": "长文件中修复错误函数",
-        "prompt": (
-            "big.py 有 60 个 func_XX 函数（func_0 到 func_59），每个返回 x * XX。\n"
-            "其中 func_37 的乘数错写成了 999。定位并修复它。"
-        ),
-        "setup": {"big.py": _long_file(60, bug=37)},
-        "tests": {
-            "test_f2p_fix.py": (
-                "from big import func_37\n\n\n"
-                "def test_func_37():\n"
-                "    assert func_37(2) == 74\n"
-            ),
-            "test_p2p_others.py": (
-                "from big import func_10\n"
-                "from big import func_59\n\n\n"
-                "def test_func_10():\n"
-                "    assert func_10(2) == 20\n\n\n"
-                "def test_func_59():\n"
-                "    assert func_59(2) == 118\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "long_context_004",
-        "category": "long_context",
-        "kind": "answer_match",
-        "title": "汇总多模块公开函数数",
-        "prompt": (
-            "pkg 包里有 10 个模块，每个模块定义一个 func_XX 函数。\n"
-            "统计这个包里总共有多少个 func_ 开头的公开函数。只输出一个整数。"
-        ),
-        "setup": {**_pkg(10)},
-        "tests": {},
-        "grader": {"type": "answer_match", "answer_pattern": r"\b10\b"},
-    },
-    {
-        "id": "long_context_005",
-        "category": "long_context",
-        "kind": "code_change",
-        "title": "拆分大文件为多模块",
-        "prompt": (
-            "把 big.py 拆成两个模块：func_0 到 func_5 移到 a.py，func_6 到 func_11 移到 b.py。\n"
-            "拆分后 a.py、b.py 应能被正常导入，原函数行为不变。"
-        ),
-        "setup": {"big.py": _long_file(12)},
-        "tests": {
-            "test_f2p_split.py": (
-                "from a import func_0\n"
-                "from b import func_11\n\n\n"
-                "def test_a():\n"
-                "    assert func_0(2) == 0\n\n\n"
-                "def test_b():\n"
-                "    assert func_11(2) == 22\n"
-            ),
-            "test_p2p_more.py": (
-                "from a import func_5\n"
-                "from b import func_6\n\n\n"
-                "def test_func_5():\n"
-                "    assert func_5(2) == 10\n\n\n"
-                "def test_func_6():\n"
-                "    assert func_6(2) == 12\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "long_context_006",
-        "category": "long_context",
-        "kind": "answer_match",
-        "title": "长日志中定位错误码",
-        "prompt": (
-            "long.log 有 300 行日志。找出唯一一条 ERROR 行，回答它的错误码（形如 E701）。\n"
-            "只输出错误码。"
-        ),
-        "setup": {
-            "long.log": "".join(
-                (
-                    f"2026-10-26 12:{i // 60:02d}:{i % 60:02d} ERROR conn refused E701\n"
-                    if i == 250
-                    else f"2026-10-26 12:{i // 60:02d}:{i % 60:02d} INFO ok\n"
-                )
-                for i in range(300)
-            ),
-        },
-        "tests": {},
-        "grader": {"type": "answer_match", "answer_pattern": "E701"},
-    },
-    {
-        "id": "long_context_007",
-        "category": "long_context",
-        "kind": "code_change",
-        "title": "多处引用常量改名",
-        "prompt": (
-            "constants.py 定义了 API_KEY，且有 8 个 consumer_XX.py 文件从它导入。\n"
-            "把常量改名为 TOKEN，并同步更新所有 consumer 文件的导入，使它们仍能正常运行。"
-        ),
-        "setup": {
-            "constants.py": "API_KEY = 'sk-old'\n",
-            **{
-                f"consumer_{i:02d}.py": "from constants import API_KEY\n\nVAL = API_KEY\n"
-                for i in range(8)
-            },
-        },
-        "tests": {
-            "test_f2p_rename.py": (
-                "import constants\n\n\n"
-                "def test_token_exists():\n"
-                "    assert constants.TOKEN == 'sk-old'\n\n\n"
-                "def test_api_key_gone():\n"
-                "    assert not hasattr(constants, 'API_KEY')\n"
-            ),
-            "test_p2p_consumer.py": (
-                "import consumer_03\n\n\n"
-                "def test_consumer():\n"
-                "    assert consumer_03.VAL == 'sk-old'\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "long_context_008",
-        "category": "long_context",
-        "kind": "code_change",
-        "title": "跨模块状态一致",
-        "prompt": (
-            "config_a.py 和 config_b.py 都定义了 VERSION，但值不一致（一个 1.0 一个 2.0）。\n"
-            "main.py 同时用到两者。请统一为 2.0，保证两个模块一致。"
-        ),
-        "setup": {
-            "config_a.py": "VERSION = '1.0'\n",
-            "config_b.py": "VERSION = '2.0'\n",
-            "main.py": (
-                "from config_a import VERSION as VA\n"
-                "from config_b import VERSION as VB\n\n\n"
-                "def versions():\n"
-                "    return VA, VB\n"
-            ),
-        },
-        "tests": {
-            "test_f2p_consistent.py": (
-                "from config_a import VERSION as VA\n"
-                "from config_b import VERSION as VB\n\n\n"
-                "def test_consistent():\n"
-                "    assert VA == VB == '2.0'\n"
-            ),
-            "test_p2p_main.py": (
-                "import main\n\n\n"
-                "def test_main():\n"
-                "    assert main.versions() == ('2.0', '2.0')\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "long_context_009",
-        "category": "long_context",
-        "kind": "code_change",
-        "title": "拆分长函数为子函数",
-        "prompt": (
-            "pipeline.py 的 process(data) 包含两步：先 strip 清洗，再过滤空串。\n"
-            "把它拆成 step1(data) 和 step2(cleaned) 两个子函数，process 调用它们。"
-        ),
-        "setup": {
-            "pipeline.py": (
-                "def process(data):\n"
-                "    cleaned = [x.strip() for x in data]\n"
-                "    filtered = [x for x in cleaned if x]\n"
-                "    return filtered\n"
-            ),
-        },
-        "tests": {
-            "test_f2p_steps.py": (
-                "from pipeline import step1, step2\n\n\n"
-                "def test_step1():\n"
-                "    assert step1([' a ', ' b ']) == ['a', 'b']\n\n\n"
-                "def test_step2():\n"
-                "    assert step2(['a', '', 'b']) == ['a', 'b']\n"
-            ),
-            "test_p2p_process.py": (
-                "from pipeline import process\n\n\n"
-                "def test_process():\n"
-                "    assert process([' a ', '', ' b ']) == ['a', 'b']\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    {
-        "id": "long_context_010",
-        "category": "long_context",
-        "kind": "code_change",
-        "title": "多文件配置一致",
-        "prompt": (
-            "有 dev.yaml、staging.yaml、prod.yaml 三个配置文件，它们的 port 分别是 8000、8001、8002。\n"
-            "请统一为 8000（只改 staging 和 prod）。"
-        ),
-        "setup": {
-            "dev.yaml": "port: 8000\n",
-            "staging.yaml": "port: 8001\n",
-            "prod.yaml": "port: 8002\n",
-        },
-        "tests": {
-            "test_f2p_config.py": (
-                "import yaml\n\n\n"
-                "def test_staging():\n"
-                "    d = yaml.safe_load(open('staging.yaml'))\n"
-                "    assert d['port'] == 8000\n\n\n"
-                "def test_prod():\n"
-                "    d = yaml.safe_load(open('prod.yaml'))\n"
-                "    assert d['port'] == 8000\n"
-            ),
-            "test_p2p_dev.py": (
-                "import yaml\n\n\n"
-                "def test_dev():\n"
-                "    d = yaml.safe_load(open('dev.yaml'))\n"
-                "    assert d['port'] == 8000\n"
-            ),
-        },
-        "grader": {"type": "fail_to_pass"},
-    },
-    # =====================================================================
-    # refactor —— 重构 / 多文件综合（5 题）
+    # refactor —— 跨文件重构保行为（3 题）
     # =====================================================================
     {
         "id": "refactor_001",
         "category": "refactor",
         "kind": "code_change",
-        "title": "抽取重复代码到公共模块",
+        "title": "抽模板方法基类消除重复",
+        "difficulty": "hard",
         "prompt": (
-            "a.py 和 b.py 里都有一个 process 函数，实现完全相同。\n"
-            "把它抽取到新建的 shared.py，并让 a.py、b.py 从 shared 导入。"
+            "payments.py 里三个支付类（Credit/Debit/Crypto）都重复实现了相同的\n"
+            "validate 逻辑和 process 骨架。请在 payments.py 里抽取一个\n"
+            "PaymentProcessor 基类（含 validate 和模板方法 process），\n"
+            "三个子类继承它并只实现各自的 _pay 钩子，保持对外行为不变。"
         ),
         "setup": {
-            "a.py": "def process(x):\n    return x.strip().upper()\n",
-            "b.py": "def process(x):\n    return x.strip().upper()\n",
+            "payments.py": (
+                "class CreditPayment:\n"
+                "    def validate(self, amount):\n"
+                "        if amount <= 0:\n"
+                "            raise ValueError('amount must be positive')\n\n"
+                "    def process(self, amount):\n"
+                "        self.validate(amount)\n"
+                "        return f'credit:{amount}'\n\n\n"
+                "class DebitPayment:\n"
+                "    def validate(self, amount):\n"
+                "        if amount <= 0:\n"
+                "            raise ValueError('amount must be positive')\n\n"
+                "    def process(self, amount):\n"
+                "        self.validate(amount)\n"
+                "        return f'debit:{amount}'\n\n\n"
+                "class CryptoPayment:\n"
+                "    def validate(self, amount):\n"
+                "        if amount <= 0:\n"
+                "            raise ValueError('amount must be positive')\n\n"
+                "    def process(self, amount):\n"
+                "        self.validate(amount)\n"
+                "        return f'crypto:{amount}'\n"
+            ),
         },
         "tests": {
-            "test_f2p_shared.py": (
-                "from shared import process\n\n\n"
-                "def test_shared():\n"
-                "    assert process(' hi ') == 'HI'\n"
+            "test_f2p_base.py": (
+                "import pytest\n"
+                "from payments import PaymentProcessor, CreditPayment, DebitPayment, CryptoPayment\n\n\n"
+                "def test_inheritance():\n"
+                "    assert issubclass(CreditPayment, PaymentProcessor)\n"
+                "    assert issubclass(DebitPayment, PaymentProcessor)\n"
+                "    assert issubclass(CryptoPayment, PaymentProcessor)\n\n\n"
+                "def test_base_validate():\n"
+                "    with pytest.raises(ValueError):\n"
+                "        CreditPayment().process(0)\n\n\n"
+                "def test_process_via_base():\n"
+                "    assert CreditPayment().process(10) == 'credit:10'\n"
             ),
-            "test_p2p_ab.py": (
-                "from a import process as pa\n"
-                "from b import process as pb\n\n\n"
-                "def test_a():\n"
-                "    assert pa(' x ') == 'X'\n\n\n"
-                "def test_b():\n"
-                "    assert pb(' y ') == 'Y'\n"
+            "test_p2p_behavior.py": (
+                "from payments import DebitPayment, CryptoPayment\n\n\n"
+                "def test_debit():\n"
+                "    assert DebitPayment().process(5) == 'debit:5'\n\n\n"
+                "def test_crypto():\n"
+                "    assert CryptoPayment().process(7) == 'crypto:7'\n"
             ),
         },
         "grader": {"type": "fail_to_pass"},
@@ -1307,29 +562,53 @@ TASKS: list[dict[str, Any]] = [
         "id": "refactor_002",
         "category": "refactor",
         "kind": "code_change",
-        "title": "移动函数到新模块",
+        "title": "过程式代码重构为类并向后兼容",
+        "difficulty": "hard",
         "prompt": (
-            "utils.py 里有 helper_a 和 helper_b 两个函数。\n"
-            "把 helper_b 移到新建的 newmod.py，并在 utils.py 里通过导入保持可访问。"
+            "stats.py 用模块级变量和多个函数维护统计数据，状态容易互相污染。\n"
+            "请重构为 Stats 类（add(n) / mean() / count()），用实例封装状态；\n"
+            "同时保留模块级的 add/mean/count 函数作为默认实例的便捷入口（向后兼容）。"
         ),
         "setup": {
-            "utils.py": (
-                "def helper_a():\n    return 'a'\n\n\n"
-                "def helper_b():\n    return 'b'\n"
+            "stats.py": (
+                "_total = 0\n"
+                "_count = 0\n\n\n"
+                "def add(n):\n"
+                "    global _total, _count\n"
+                "    _total += n\n"
+                "    _count += 1\n\n\n"
+                "def mean():\n"
+                "    return _total / _count if _count else 0\n\n\n"
+                "def count():\n"
+                "    return _count\n"
             ),
         },
         "tests": {
-            "test_f2p_move.py": (
-                "from newmod import helper_b\n\n\n"
-                "def test_newmod():\n"
-                "    assert helper_b() == 'b'\n"
+            "test_f2p_class.py": (
+                "from stats import Stats\n\n\n"
+                "def test_isolated_instances():\n"
+                "    a = Stats()\n"
+                "    b = Stats()\n"
+                "    a.add(10)\n"
+                "    a.add(20)\n"
+                "    b.add(100)\n"
+                "    assert a.mean() == 15\n"
+                "    assert b.mean() == 100\n\n\n"
+                "def test_count():\n"
+                "    s = Stats()\n"
+                "    s.add(1)\n"
+                "    s.add(2)\n"
+                "    assert s.count() == 2\n\n\n"
+                "def test_empty_mean():\n"
+                "    assert Stats().mean() == 0\n"
             ),
-            "test_p2p_utils.py": (
-                "from utils import helper_a, helper_b\n\n\n"
-                "def test_helper_a():\n"
-                "    assert helper_a() == 'a'\n\n\n"
-                "def test_helper_b_reachable():\n"
-                "    assert helper_b() == 'b'\n"
+            "test_p2p_backcompat.py": (
+                "from stats import add, mean, count\n\n\n"
+                "def test_module_funcs():\n"
+                "    s = count()\n"
+                "    add(4)\n"
+                "    assert count() == s + 1\n"
+                "    assert mean() == 4\n"
             ),
         },
         "grader": {"type": "fail_to_pass"},
@@ -1338,98 +617,1298 @@ TASKS: list[dict[str, Any]] = [
         "id": "refactor_003",
         "category": "refactor",
         "kind": "code_change",
-        "title": "抽取基类消除重复",
+        "title": "拆巨型模块并消除循环依赖",
+        "difficulty": "hard",
         "prompt": (
-            "cat.py 和 dog.py 里各有一个 speak 方法，逻辑类似。\n"
-            "抽取一个 Animal 基类（放在 animal.py），让 Cat、Dog 继承它。"
+            "app.py 同时定义了用户相关和订单相关的函数，且 user.py 与 order.py\n"
+            "之间互相 import 形成了循环依赖。\n"
+            "请：1) 把 app.py 里的函数拆分到 users.py 和 orders.py；\n"
+            "2) 解除 user/order 之间的循环依赖；\n"
+            "3) 让 app.py 通过 re-export 保持原有 from app import ... 的用法不变。"
         ),
         "setup": {
-            "animal.py": "",
-            "cat.py": "class Cat:\n    def speak(self):\n        return 'meow'\n",
-            "dog.py": "class Dog:\n    def speak(self):\n        return 'woof'\n",
+            "app.py": (
+                "from user import get_username\n"
+                "from order import get_order_user\n\n\n"
+                "def user_label(uid):\n"
+                "    return f'user:{get_username(uid)}'\n\n\n"
+                "def order_label(oid):\n"
+                "    return f'order:{get_order_user(oid)}'\n"
+            ),
+            "user.py": (
+                "from order import get_order_user\n\n\n"
+                "def get_username(uid):\n"
+                "    return f'u{uid}'\n\n\n"
+                "def orders_of(uid):\n"
+                "    return get_order_user(uid)\n"
+            ),
+            "order.py": (
+                "from user import get_username\n\n\n"
+                "def get_order_user(oid):\n"
+                "    return f'user-of-{oid}'\n"
+            ),
         },
         "tests": {
-            "test_f2p_base.py": (
-                "from animal import Animal\n"
-                "from cat import Cat\n"
-                "from dog import Dog\n\n\n"
-                "def test_inheritance():\n"
-                "    assert issubclass(Cat, Animal)\n"
-                "    assert issubclass(Dog, Animal)\n"
+            "test_f2p_split.py": (
+                "from users import user_label\n"
+                "from orders import order_label\n\n\n"
+                "def test_users():\n"
+                "    assert user_label(1) == 'user:u1'\n\n\n"
+                "def test_orders():\n"
+                "    assert order_label(2) == 'order:user-of-2'\n\n\n"
+                "def test_no_cycle_import():\n"
+                "    import user\n"
+                "    import order\n"
+                "    assert user.get_username(1) == 'u1'\n"
+                "    assert order.get_order_user(2) == 'user-of-2'\n"
             ),
-            "test_p2p_speak.py": (
-                "from cat import Cat\n"
-                "from dog import Dog\n\n\n"
-                "def test_cat():\n"
-                "    assert Cat().speak() == 'meow'\n\n\n"
-                "def test_dog():\n"
-                "    assert Dog().speak() == 'woof'\n"
+            "test_p2p_backcompat.py": (
+                "from app import user_label, order_label\n\n\n"
+                "def test_backcompat():\n"
+                "    assert user_label(3) == 'user:u3'\n"
+                "    assert order_label(4) == 'order:user-of-4'\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    # =====================================================================
+    # debug —— 失败测试驱动修复（4 题）
+    # =====================================================================
+    {
+        "id": "debug_001",
+        "category": "debug",
+        "kind": "code_change",
+        "title": "修复快速排序分区边界",
+        "difficulty": "hard",
+        "prompt": (
+            "运行 pytest 会发现 test_work.py 失败：quicksort 对某些数组排序错误或递归不终止。\n"
+            "阅读失败信息，定位分区逻辑的边界问题并修复。"
+        ),
+        "setup": {
+            "work.py": (
+                "def quicksort(arr):\n"
+                "    if len(arr) <= 1:\n"
+                "        return arr\n"
+                "    pivot = arr[0]\n"
+                "    left = [x for x in arr if x < pivot]\n"
+                "    right = [x for x in arr if x > pivot]\n"
+                "    return quicksort(left) + [pivot] + quicksort(right)\n"
+            ),
+            "test_work.py": (
+                "from work import quicksort\n\n\n"
+                "def test_duplicates():\n"
+                "    assert quicksort([3, 1, 2, 1, 3]) == [1, 1, 2, 3, 3]\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_sort.py": (
+                "from work import quicksort\n\n\n"
+                "def test_duplicates():\n"
+                "    assert quicksort([3, 1, 2, 1, 3]) == [1, 1, 2, 3, 3]\n\n\n"
+                "def test_sorted():\n"
+                "    assert quicksort([1, 2, 3, 4]) == [1, 2, 3, 4]\n\n\n"
+                "def test_reversed():\n"
+                "    assert quicksort([5, 4, 3, 2, 1]) == [1, 2, 3, 4, 5]\n\n\n"
+                "def test_single():\n"
+                "    assert quicksort([9]) == [9]\n"
+            ),
+            "test_p2p_sort.py": (
+                "from work import quicksort\n\n\n"
+                "def test_empty():\n"
+                "    assert quicksort([]) == []\n"
             ),
         },
         "grader": {"type": "fail_to_pass"},
     },
     {
-        "id": "refactor_004",
-        "category": "refactor",
+        "id": "debug_002",
+        "category": "debug",
         "kind": "code_change",
-        "title": "消除魔法数字",
+        "title": "修复闰年二月天数",
+        "difficulty": "hard",
         "prompt": (
-            "code.py 里多处硬编码了 3.14。请定义常量 PI = 3.14，并让所有函数改用 PI。"
+            "运行 pytest 会发现 test_work.py 失败：days_in_month 对平年 2 月返回了 29 天。\n"
+            "阅读失败信息，修复二月天数的判断（平年 28 天、闰年 29 天，注意整百年规则）。"
         ),
         "setup": {
-            "code.py": (
-                "def area(r):\n    return 3.14 * r * r\n\n\n"
-                "def circumference(r):\n    return 2 * 3.14 * r\n"
+            "work.py": (
+                "def days_in_month(year, month):\n"
+                "    if month in (4, 6, 9, 11):\n"
+                "        return 30\n"
+                "    if month == 2:\n"
+                "        return 29\n"
+                "    return 31\n\n\n"
+                "def days_between(y1, m1, d1, y2, m2, d2):\n"
+                "    from datetime import date\n"
+                "    return (date(y2, m2, d2) - date(y1, m1, d1)).days\n"
+            ),
+            "test_work.py": (
+                "from work import days_in_month\n\n\n"
+                "def test_feb_common():\n"
+                "    assert days_in_month(2023, 2) == 28\n"
             ),
         },
         "tests": {
-            "test_f2p_pi.py": (
-                "import code\n\n\n"
-                "def test_pi_defined():\n"
-                "    assert code.PI == 3.14\n\n\n"
-                "def test_area():\n"
-                "    assert code.area(1) == 3.14\n"
+            "test_f2p_days.py": (
+                "from work import days_in_month\n\n\n"
+                "def test_feb_common():\n"
+                "    assert days_in_month(2023, 2) == 28\n\n\n"
+                "def test_feb_leap():\n"
+                "    assert days_in_month(2024, 2) == 29\n\n\n"
+                "def test_century():\n"
+                "    assert days_in_month(2000, 2) == 29\n"
+                "    assert days_in_month(1900, 2) == 28\n"
             ),
-            "test_p2p_circumference.py": (
-                "import code\n\n\n"
-                "def test_circumference():\n"
-                "    assert code.circumference(1) == 6.28\n"
+            "test_p2p_days.py": (
+                "from work import days_in_month, days_between\n\n\n"
+                "def test_thirty():\n"
+                "    assert days_in_month(2024, 4) == 30\n\n\n"
+                "def test_thirty_one():\n"
+                "    assert days_in_month(2024, 1) == 31\n\n\n"
+                "def test_days_between():\n"
+                "    assert days_between(2024, 1, 1, 2024, 1, 10) == 9\n"
             ),
         },
         "grader": {"type": "fail_to_pass"},
     },
     {
-        "id": "refactor_005",
-        "category": "refactor",
+        "id": "debug_003",
+        "category": "debug",
         "kind": "code_change",
-        "title": "解耦全局可变状态",
+        "title": "修复贪心找零算法",
+        "difficulty": "hard",
         "prompt": (
-            "settings.py 里有一个模块级可变字典 config，两个函数直接修改它。\n"
-            "改为提供一个 get_config() 函数返回 config 的副本，让外部修改不会影响原值。"
+            "运行 pytest 会发现 test_work.py 失败：make_change 对某些金额返回的硬币数不是最少的。\n"
+            "阅读失败信息，修复找零算法，使它始终返回数量最少的硬币组合。"
         ),
         "setup": {
-            "settings.py": (
-                "config = {'debug': False}\n\n\n"
-                "def get_config():\n    return config\n"
+            "work.py": (
+                "def make_change(coins, amount):\n"
+                "    coins = sorted(coins, reverse=True)\n"
+                "    result = []\n"
+                "    for c in coins:\n"
+                "        while amount >= c:\n"
+                "            result.append(c)\n"
+                "            amount -= c\n"
+                "    return result\n"
+            ),
+            "test_work.py": (
+                "from work import make_change\n\n\n"
+                "def test_min_coins():\n"
+                "    assert len(make_change([1, 5, 7], 10)) == 2\n"
             ),
         },
         "tests": {
-            "test_f2p_copy.py": (
-                "import settings\n\n\n"
-                "def test_returns_copy():\n"
-                "    c = settings.get_config()\n"
-                "    c['debug'] = True\n"
-                "    assert settings.get_config()['debug'] is False\n"
+            "test_f2p_change.py": (
+                "from work import make_change\n\n\n"
+                "def test_min_coins():\n"
+                "    assert len(make_change([1, 5, 7], 10)) == 2\n\n\n"
+                "def test_another_min():\n"
+                "    assert len(make_change([1, 3, 4], 6)) == 2\n\n\n"
+                "def test_sum_correct():\n"
+                "    coins = make_change([1, 2, 5], 11)\n"
+                "    assert sum(coins) == 11\n"
+                "    assert len(coins) == 3\n\n\n"
+                "def test_single_coin():\n"
+                "    assert make_change([1], 3) == [1, 1, 1]\n"
             ),
-            "test_p2p_value.py": (
-                "import settings\n\n\n"
-                "def test_default():\n"
-                "    assert settings.get_config()['debug'] is False\n"
+            "test_p2p_change.py": (
+                "from work import make_change\n\n\n"
+                "def test_exact_fit():\n"
+                "    assert make_change([1, 5, 10], 10) == [10]\n"
             ),
         },
         "grader": {"type": "fail_to_pass"},
     },
-    # <<<MORE_TASKS>>>
+    {
+        "id": "debug_004",
+        "category": "debug",
+        "kind": "code_change",
+        "title": "修复字节解码编码错误",
+        "difficulty": "hard",
+        "prompt": (
+            "运行 pytest 会发现 test_work.py 失败：decode_utf8 处理非法字节时报错或返回错误结果。\n"
+            "阅读失败信息，修复解码逻辑（对无法解码的字节应能容错处理）。"
+        ),
+        "setup": {
+            "work.py": (
+                "def decode_utf8(data):\n"
+                "    return data.decode('utf-8')\n\n\n"
+                "def encode_utf8(text):\n"
+                "    return text.encode('utf-8')\n"
+            ),
+            "test_work.py": (
+                "from work import decode_utf8\n\n\n"
+                "def test_invalid_bytes():\n"
+                "    assert decode_utf8(b'hello\\xffworld') == 'hello\\ufffdworld'\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_decode.py": (
+                "from work import decode_utf8\n\n\n"
+                "def test_invalid_bytes():\n"
+                "    assert decode_utf8(b'hello\\xffworld') == 'hello\\ufffdworld'\n\n\n"
+                "def test_valid_utf8():\n"
+                "    assert decode_utf8('你好'.encode('utf-8')) == '你好'\n\n\n"
+                "def test_ascii():\n"
+                "    assert decode_utf8(b'abc') == 'abc'\n"
+            ),
+            "test_p2p_encode.py": (
+                "from work import encode_utf8\n\n\n"
+                "def test_encode():\n"
+                "    assert encode_utf8('ok') == b'ok'\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    # =====================================================================
+    # tool_recovery —— 导入/环境错误恢复（3 题）
+    # =====================================================================
+    {
+        "id": "tool_recovery_001",
+        "category": "tool_recovery",
+        "kind": "code_change",
+        "title": "解除三方循环导入",
+        "difficulty": "hard",
+        "prompt": (
+            "import a 会报 ImportError（循环导入）：a → b → c → a 形成三方循环。\n"
+            "请解除循环依赖，使三个模块都能被正常 import 和调用，且各自的函数行为不变。"
+        ),
+        "setup": {
+            "a.py": (
+                "from b import get_b\n\n\n"
+                "def get_a():\n"
+                "    return 'a' + get_b()\n"
+            ),
+            "b.py": (
+                "from c import get_c\n\n\n"
+                "def get_b():\n"
+                "    return 'b' + get_c()\n"
+            ),
+            "c.py": (
+                "from a import get_a\n\n\n"
+                "def get_c():\n"
+                "    return 'c'\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_import.py": (
+                "import a\n\n\n"
+                "def test_get_a():\n"
+                "    assert a.get_a() == 'abc'\n\n\n"
+                "def test_modules_importable():\n"
+                "    import b, c\n"
+                "    assert b.get_b() == 'bc'\n"
+                "    assert c.get_c() == 'c'\n"
+            ),
+            "test_p2p_c.py": (
+                "import c\n\n\n"
+                "def test_get_c():\n"
+                "    assert c.get_c() == 'c'\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "tool_recovery_002",
+        "category": "tool_recovery",
+        "kind": "code_change",
+        "title": "修复包内相对导入错误",
+        "difficulty": "hard",
+        "prompt": (
+            "运行 main.py 会报 ImportError：包 mypkg 内的模块用了错误的导入方式。\n"
+            "请把包内模块之间的导入改为正确的相对导入，使 main.py 正常运行。"
+        ),
+        "setup": {
+            "main.py": (
+                "from mypkg.api import run\n\n\n"
+                "def main():\n"
+                "    return run()\n"
+            ),
+            "mypkg/__init__.py": "",
+            "mypkg/api.py": (
+                "from core import compute\n\n\n"
+                "def run():\n"
+                "    return compute(3)\n"
+            ),
+            "mypkg/core.py": (
+                "def compute(n):\n"
+                "    return n * 2\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_import.py": (
+                "import main\n\n\n"
+                "def test_main():\n"
+                "    assert main.main() == 6\n\n\n"
+                "def test_core():\n"
+                "    from mypkg.core import compute\n"
+                "    assert compute(5) == 10\n"
+            ),
+            "test_p2p_core.py": (
+                "from mypkg.core import compute\n\n\n"
+                "def test_compute():\n"
+                "    assert compute(7) == 14\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "tool_recovery_003",
+        "category": "tool_recovery",
+        "kind": "code_change",
+        "title": "为弃用 API 提供兼容层",
+        "difficulty": "hard",
+        "prompt": (
+            "旧代码用 legacy.get_value() 读取配置，但该模块已重命名为 config，"
+            "且方法改名为 fetch()。运行 legacy 用户代码会报 ModuleNotFoundError。\n"
+            "请提供一个兼容层（shim），让 from legacy import get_value 仍可用，"
+            "内部委托给新的 config.fetch，且不破坏新模块。"
+        ),
+        "setup": {
+            "config.py": (
+                "def fetch(key):\n"
+                "    return {'host': 'localhost', 'port': 8080}[key]\n"
+            ),
+            "legacy_user.py": (
+                "from legacy import get_value\n\n\n"
+                "def read_host():\n"
+                "    return get_value('host')\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_shim.py": (
+                "from legacy_user import read_host\n\n\n"
+                "def test_read_host():\n"
+                "    assert read_host() == 'localhost'\n\n\n"
+                "def test_shim_direct():\n"
+                "    from legacy import get_value\n"
+                "    assert get_value('port') == 8080\n"
+            ),
+            "test_p2p_config.py": (
+                "from config import fetch\n\n\n"
+                "def test_fetch():\n"
+                "    assert fetch('host') == 'localhost'\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    # =====================================================================
+    # long_task —— 长任务（2 题，更复杂）
+    # =====================================================================
+    {
+        "id": "long_task_001",
+        "category": "long_task",
+        "kind": "code_change",
+        "title": "按设计文档实现多模块用户服务",
+        "difficulty": "hard",
+        "labels": ["long"],
+        "timeout_seconds": 600,
+        "prompt": (
+            "这是一个需要分阶段完成的任务：\n"
+            "1. 阅读 design.md，理解用户管理系统的设计与需求。\n"
+            "2. 阅读 models.py、repo.py、validators.py，理解已有的数据模型、仓库和校验工具。\n"
+            "3. 在 service.py 中实现 UserService 类（方法体目前是 raise NotImplementedError），"
+            "组合已有模块完成业务逻辑。\n"
+            "4. 自己验证实现的正确性（可直接运行测试或交互验证）。\n"
+            "注意：不要改动 design.md、models.py、repo.py、validators.py。"
+        ),
+        "setup": {
+            "design.md": (
+                "# 用户管理系统设计\n\n"
+                "UserService 负责用户的注册与查询，需求如下：\n\n"
+                "- register(name, email)：注册用户，返回 user 字典（含 id/name/email）。\n"
+                "  - name 去除首尾空白后非空，否则抛 ValueError。\n"
+                "  - email 必须包含 @，否则抛 ValueError。\n"
+                "  - email 已存在时抛 ValueError。\n"
+                "  - id 从 1 开始自增。\n"
+                "- find_by_email(email)：返回该 email 的用户，不存在返回 None。\n"
+                "- count()：返回已注册用户总数。\n"
+                "- all_names()：按注册顺序返回所有用户名列表。\n\n"
+                "已有模块：models.make_user、repo.Repo、validators.is_valid_name / is_valid_email。\n"
+            ),
+            "models.py": (
+                "def make_user(name, email, uid):\n"
+                "    return {'id': uid, 'name': name, 'email': email}\n"
+            ),
+            "repo.py": (
+                "class Repo:\n"
+                "    def __init__(self):\n"
+                "        self._users = []\n\n"
+                "    def add(self, user):\n"
+                "        self._users.append(user)\n\n"
+                "    def find(self, email):\n"
+                "        for u in self._users:\n"
+                "            if u['email'] == email:\n"
+                "                return u\n"
+                "        return None\n\n"
+                "    def all(self):\n"
+                "        return list(self._users)\n"
+            ),
+            "validators.py": (
+                "def is_valid_name(name):\n"
+                "    return bool(name and name.strip())\n\n\n"
+                "def is_valid_email(email):\n"
+                "    return '@' in email\n"
+            ),
+            "service.py": (
+                "from models import make_user\n"
+                "from repo import Repo\n"
+                "from validators import is_valid_name, is_valid_email\n\n\n"
+                "class UserService:\n"
+                "    def __init__(self):\n"
+                "        self._repo = Repo()\n"
+                "        self._next_id = 1\n\n"
+                "    def register(self, name, email):\n"
+                "        raise NotImplementedError\n\n"
+                "    def find_by_email(self, email):\n"
+                "        raise NotImplementedError\n\n"
+                "    def count(self):\n"
+                "        raise NotImplementedError\n\n"
+                "    def all_names(self):\n"
+                "        raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_service.py": (
+                "import pytest\n"
+                "from service import UserService\n\n\n"
+                "def test_register_and_find():\n"
+                "    s = UserService()\n"
+                "    u = s.register('alice', 'alice@x.com')\n"
+                "    assert s.find_by_email('alice@x.com') == u\n"
+                "    assert s.count() == 1\n\n\n"
+                "def test_duplicate_email():\n"
+                "    s = UserService()\n"
+                "    s.register('alice', 'a@x.com')\n"
+                "    with pytest.raises(ValueError):\n"
+                "        s.register('bob', 'a@x.com')\n\n\n"
+                "def test_invalid_name():\n"
+                "    s = UserService()\n"
+                "    with pytest.raises(ValueError):\n"
+                "        s.register('   ', 'a@x.com')\n\n\n"
+                "def test_invalid_email():\n"
+                "    s = UserService()\n"
+                "    with pytest.raises(ValueError):\n"
+                "        s.register('alice', 'nope')\n\n\n"
+                "def test_all_names_order():\n"
+                "    s = UserService()\n"
+                "    s.register('alice', 'a@x.com')\n"
+                "    s.register('bob', 'b@x.com')\n"
+                "    assert s.all_names() == ['alice', 'bob']\n"
+            ),
+            "test_p2p_modules.py": (
+                "from repo import Repo\n"
+                "from validators import is_valid_email, is_valid_name\n\n\n"
+                "def test_repo():\n"
+                "    r = Repo()\n"
+                "    r.add({'id': 1, 'email': 'a@x.com'})\n"
+                "    assert r.find('a@x.com')['id'] == 1\n"
+                "    assert r.find('none') is None\n\n\n"
+                "def test_validators():\n"
+                "    assert is_valid_name('x') is True\n"
+                "    assert is_valid_name('  ') is False\n"
+                "    assert is_valid_email('a@b') is True\n"
+                "    assert is_valid_email('ab') is False\n"
+            ),
+        },
+        "grader": {
+            "type": "fail_to_pass",
+            "forbidden_files": ["design.md", "models.py", "repo.py", "validators.py"],
+        },
+    },
+    {
+        "id": "long_task_002",
+        "category": "long_task",
+        "kind": "code_change",
+        "title": "长流水线多环节错误定位与交叉校验",
+        "difficulty": "hard",
+        "labels": ["long"],
+        "timeout_seconds": 600,
+        "prompt": (
+            "项目里有 20 个处理环节 stage_00.py 到 stage_19.py，pipeline.py 把它们串成流水线，\n"
+            "cross.py 交叉引用 stage_00 和 stage_19 做聚合校验。\n"
+            "每个 stage 的 transform(x) 应该返回 x + 该环节编号。\n"
+            "但 pipeline 的最终输出不对，说明其中有不止一个环节实现有误。\n"
+            "请在整个流水线中定位出所有错误环节并修复，使 pipeline.run(0) 和 cross.aggregate(0) 都返回正确结果。"
+        ),
+        "setup": _stages(20, bug=[5, 13], cross=True),
+        "tests": {
+            "test_f2p_pipeline.py": (
+                "from pipeline import run\n\n\n"
+                "def test_full_pipeline():\n"
+                "    assert run(0) == 190\n\n\n"
+                "def test_other_input():\n"
+                "    assert run(5) == 195\n"
+            ),
+            "test_p2p_cross.py": (
+                "from cross import aggregate\n\n\n"
+                "def test_aggregate():\n"
+                "    assert aggregate(0) == 19\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    # =====================================================================
+    # algorithm —— 算法实现（4 题）
+    # =====================================================================
+    {
+        "id": "algorithm_001",
+        "category": "algorithm",
+        "kind": "code_change",
+        "title": "实现拓扑排序（课程依赖）",
+        "difficulty": "hard",
+        "prompt": (
+            "toposort.py 里的 topological_sort 还没有实现。请实现它：\n"
+            "输入是节点集合和边列表（每条边 (先修, 后修)），返回一个合法的拓扑序列表；\n"
+            "若图中有环则抛 ValueError。不要改动已经实现的 build_graph 函数。"
+        ),
+        "setup": {
+            "toposort.py": (
+                "def build_graph(nodes, edges):\n"
+                "    return {n: [] for n in nodes}\n\n\n"
+                "def topological_sort(nodes, edges):\n"
+                "    raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_topo.py": (
+                "import pytest\n"
+                "from toposort import topological_sort\n\n\n"
+                "def test_chain():\n"
+                "    order = topological_sort([1, 2, 3], [(1, 2), (2, 3)])\n"
+                "    assert order.index(1) < order.index(2) < order.index(3)\n\n\n"
+                "def test_diamond():\n"
+                "    order = topological_sort(['a', 'b', 'c', 'd'], [('a', 'b'), ('a', 'c'), ('b', 'd'), ('c', 'd')])\n"
+                "    assert order.index('a') < order.index('b')\n"
+                "    assert order.index('a') < order.index('c')\n"
+                "    assert order.index('b') < order.index('d')\n"
+                "    assert order.index('c') < order.index('d')\n\n\n"
+                "def test_cycle():\n"
+                "    with pytest.raises(ValueError):\n"
+                "        topological_sort([1, 2], [(1, 2), (2, 1)])\n"
+            ),
+            "test_p2p_graph.py": (
+                "from toposort import build_graph\n\n\n"
+                "def test_build():\n"
+                "    assert build_graph([1], []) == {1: []}\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "algorithm_002",
+        "category": "algorithm",
+        "kind": "code_change",
+        "title": "实现并查集（连通分量）",
+        "difficulty": "hard",
+        "prompt": (
+            "unionfind.py 里的 UnionFind 还没有实现。请实现它：\n"
+            "- union(a, b) 合并两个元素所在集合\n"
+            "- find(a) 返回元素所在集合的代表元（带路径压缩）\n"
+            "- connected(a, b) 判断两元素是否在同一集合\n"
+            "不要改动已经实现的 count_nodes 函数。"
+        ),
+        "setup": {
+            "unionfind.py": (
+                "def count_nodes(n):\n"
+                "    return n\n\n\n"
+                "class UnionFind:\n"
+                "    def __init__(self, n):\n"
+                "        raise NotImplementedError\n\n"
+                "    def find(self, x):\n"
+                "        raise NotImplementedError\n\n"
+                "    def union(self, a, b):\n"
+                "        raise NotImplementedError\n\n"
+                "    def connected(self, a, b):\n"
+                "        raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_unionfind.py": (
+                "from unionfind import UnionFind\n\n\n"
+                "def test_union_connected():\n"
+                "    uf = UnionFind(5)\n"
+                "    uf.union(0, 1)\n"
+                "    uf.union(1, 2)\n"
+                "    assert uf.connected(0, 2) is True\n"
+                "    assert uf.connected(0, 3) is False\n\n\n"
+                "def test_transitive():\n"
+                "    uf = UnionFind(6)\n"
+                "    uf.union(0, 1)\n"
+                "    uf.union(2, 3)\n"
+                "    uf.union(1, 2)\n"
+                "    assert uf.connected(0, 3) is True\n"
+                "    assert uf.connected(4, 5) is False\n\n\n"
+                "def test_self():\n"
+                "    uf = UnionFind(3)\n"
+                "    assert uf.connected(1, 1) is True\n"
+            ),
+            "test_p2p_count.py": (
+                "from unionfind import count_nodes\n\n\n"
+                "def test_count():\n"
+                "    assert count_nodes(10) == 10\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "algorithm_003",
+        "category": "algorithm",
+        "kind": "code_change",
+        "title": "实现最长无重复子串（滑动窗口）",
+        "difficulty": "hard",
+        "prompt": (
+            "substring.py 里的 longest_unique_substring 还没有实现。请实现它：\n"
+            "返回字符串中最长不含重复字符的子串长度。\n"
+            "不要改动已经实现的 is_unique 函数。"
+        ),
+        "setup": {
+            "substring.py": (
+                "def is_unique(s):\n"
+                "    return len(set(s)) == len(s)\n\n\n"
+                "def longest_unique_substring(s):\n"
+                "    raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_substring.py": (
+                "from substring import longest_unique_substring\n\n\n"
+                "def test_basic():\n"
+                "    assert longest_unique_substring('abcabcbb') == 3\n\n\n"
+                "def test_all_same():\n"
+                "    assert longest_unique_substring('bbbbb') == 1\n\n\n"
+                "def test_end():\n"
+                "    assert longest_unique_substring('pwwkew') == 3\n\n\n"
+                "def test_empty():\n"
+                "    assert longest_unique_substring('') == 0\n\n\n"
+                "def test_all_unique():\n"
+                "    assert longest_unique_substring('abcdef') == 6\n"
+            ),
+            "test_p2p_unique.py": (
+                "from substring import is_unique\n\n\n"
+                "def test_is_unique():\n"
+                "    assert is_unique('abc') is True\n"
+                "    assert is_unique('aab') is False\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "algorithm_004",
+        "category": "algorithm",
+        "kind": "code_change",
+        "title": "实现区间合并与插入",
+        "difficulty": "hard",
+        "prompt": (
+            "intervals.py 里的 merge 和 insert 还没有实现。请实现它们：\n"
+            "- merge(intervals) 合并所有重叠区间，返回按起点排序的不重叠区间列表\n"
+            "- insert(intervals, new_interval) 把新区间插入并合并\n"
+            "不要改动已经实现的 overlaps 函数。"
+        ),
+        "setup": {
+            "intervals.py": (
+                "def overlaps(a, b):\n"
+                "    return a[0] <= b[1] and b[0] <= a[1]\n\n\n"
+                "def merge(intervals):\n"
+                "    raise NotImplementedError\n\n\n"
+                "def insert(intervals, new_interval):\n"
+                "    raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_intervals.py": (
+                "from intervals import merge, insert\n\n\n"
+                "def test_merge_overlapping():\n"
+                "    assert merge([[1, 3], [2, 6], [8, 10], [15, 18]]) == [[1, 6], [8, 10], [15, 18]]\n\n\n"
+                "def test_merge_touching():\n"
+                "    assert merge([[1, 4], [4, 5]]) == [[1, 5]]\n\n\n"
+                "def test_insert():\n"
+                "    assert insert([[1, 3], [6, 9]], [2, 5]) == [[1, 5], [6, 9]]\n\n\n"
+                "def test_insert_no_overlap():\n"
+                "    assert insert([[1, 2], [5, 6]], [3, 4]) == [[1, 2], [3, 4], [5, 6]]\n"
+            ),
+            "test_p2p_overlaps.py": (
+                "from intervals import overlaps\n\n\n"
+                "def test_overlaps():\n"
+                "    assert overlaps([1, 3], [2, 4]) is True\n"
+                "    assert overlaps([1, 2], [3, 4]) is False\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    # =====================================================================
+    # concurrency —— 并发（4 题）
+    # =====================================================================
+    {
+        "id": "concurrency_001",
+        "category": "concurrency",
+        "kind": "code_change",
+        "title": "实现线程安全计数器",
+        "difficulty": "hard",
+        "prompt": (
+            "counter.py 里的 ThreadSafeCounter 还没有实现。请实现它：\n"
+            "- increment() 每次加 1（线程安全）\n"
+            "- value() 返回当前值\n"
+            "要求：多线程并发调用 increment() 时结果必须精确无误。\n"
+            "不要改动已经实现的 describe 函数。"
+        ),
+        "setup": {
+            "counter.py": (
+                "def describe():\n"
+                "    return 'thread-safe counter'\n\n\n"
+                "class ThreadSafeCounter:\n"
+                "    def __init__(self):\n"
+                "        raise NotImplementedError\n\n"
+                "    def increment(self):\n"
+                "        raise NotImplementedError\n\n"
+                "    def value(self):\n"
+                "        raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_counter.py": (
+                "import threading\n"
+                "from counter import ThreadSafeCounter\n\n\n"
+                "def test_concurrent_increment():\n"
+                "    c = ThreadSafeCounter()\n"
+                "    n_threads, per = 8, 20000\n"
+                "    def worker():\n"
+                "        for _ in range(per):\n"
+                "            c.increment()\n"
+                "    threads = [threading.Thread(target=worker) for _ in range(n_threads)]\n"
+                "    for t in threads:\n"
+                "        t.start()\n"
+                "    for t in threads:\n"
+                "        t.join()\n"
+                "    assert c.value() == n_threads * per\n\n\n"
+                "def test_initial():\n"
+                "    assert ThreadSafeCounter().value() == 0\n"
+            ),
+            "test_p2p_describe.py": (
+                "from counter import describe\n\n\n"
+                "def test_describe():\n"
+                "    assert describe() == 'thread-safe counter'\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "concurrency_002",
+        "category": "concurrency",
+        "kind": "code_change",
+        "title": "实现线程安全键值存储",
+        "difficulty": "hard",
+        "prompt": (
+            "kv.py 里的 ThreadSafeKV 还没有实现。请实现它：\n"
+            "- get(key, default=None)\n"
+            "- set(key, value)\n"
+            "- delete(key)\n"
+            "要求：多线程并发读写时不会丢失更新、不会崩溃。\n"
+            "不要改动已经实现的 keys_of 函数。"
+        ),
+        "setup": {
+            "kv.py": (
+                "def keys_of(mapping):\n"
+                "    return list(mapping.keys())\n\n\n"
+                "class ThreadSafeKV:\n"
+                "    def __init__(self):\n"
+                "        raise NotImplementedError\n\n"
+                "    def get(self, key, default=None):\n"
+                "        raise NotImplementedError\n\n"
+                "    def set(self, key, value):\n"
+                "        raise NotImplementedError\n\n"
+                "    def delete(self, key):\n"
+                "        raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_kv.py": (
+                "import threading\n"
+                "from kv import ThreadSafeKV\n\n\n"
+                "def test_concurrent_set():\n"
+                "    kv = ThreadSafeKV()\n"
+                "    def worker(i):\n"
+                "        for j in range(1000):\n"
+                "            kv.set(i, j)\n"
+                "    threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]\n"
+                "    for t in threads:\n"
+                "        t.start()\n"
+                "    for t in threads:\n"
+                "        t.join()\n"
+                "    for i in range(10):\n"
+                "        assert kv.get(i) == 999\n\n\n"
+                "def test_basic_ops():\n"
+                "    kv = ThreadSafeKV()\n"
+                "    kv.set('a', 1)\n"
+                "    assert kv.get('a') == 1\n"
+                "    kv.delete('a')\n"
+                "    assert kv.get('a', 'missing') == 'missing'\n"
+            ),
+            "test_p2p_keys.py": (
+                "from kv import keys_of\n\n\n"
+                "def test_keys():\n"
+                "    assert keys_of({'a': 1, 'b': 2}) == ['a', 'b']\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "concurrency_003",
+        "category": "concurrency",
+        "kind": "code_change",
+        "title": "实现 asyncio 并发聚合",
+        "difficulty": "hard",
+        "prompt": (
+            "fetcher.py 里的 fetch_all 还没有实现。请实现它：\n"
+            "并发调用 fetch(url) 获取所有 url 的结果，返回按输入顺序排列的结果列表。\n"
+            "不要改动已经实现的 fetch 函数。"
+        ),
+        "setup": {
+            "fetcher.py": (
+                "import asyncio\n\n\n"
+                "async def fetch(url):\n"
+                "    await asyncio.sleep(0)\n"
+                "    return f'{url}!'\n\n\n"
+                "async def fetch_all(urls):\n"
+                "    raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_fetch.py": (
+                "import asyncio\n"
+                "from fetcher import fetch_all\n\n\n"
+                "def test_fetch_all():\n"
+                "    result = asyncio.run(fetch_all(['a', 'b', 'c', 'd']))\n"
+                "    assert result == ['a!', 'b!', 'c!', 'd!']\n\n\n"
+                "def test_empty():\n"
+                "    assert asyncio.run(fetch_all([])) == []\n"
+            ),
+            "test_p2p_fetch_one.py": (
+                "import asyncio\n"
+                "from fetcher import fetch\n\n\n"
+                "def test_fetch_one():\n"
+                "    assert asyncio.run(fetch('x')) == 'x!'\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "concurrency_004",
+        "category": "concurrency",
+        "kind": "code_change",
+        "title": "实现生产者消费者队列",
+        "difficulty": "hard",
+        "prompt": (
+            "pipeline.py 里的 BoundedQueue 还没有实现。请实现它（基于标准库 queue.Queue）：\n"
+            "- put(item) 放入一个元素\n"
+            "- get() 取出一个元素（阻塞直到有元素）\n"
+            "- close() 标记生产结束（向队列放入结束哨兵 Sentinel）\n"
+            "- 支持迭代（__iter__），迭代在遇到结束哨兵时停止\n"
+            "要求：一个生产者线程、一个消费者线程能通过 for 迭代正确协作，消费到全部元素。\n"
+            "不要改动已经实现的 Sentinel 常量。"
+        ),
+        "setup": {
+            "pipeline.py": (
+                "Sentinel = object()\n\n\n"
+                "class BoundedQueue:\n"
+                "    def __init__(self, maxsize=100):\n"
+                "        raise NotImplementedError\n\n"
+                "    def put(self, item):\n"
+                "        raise NotImplementedError\n\n"
+                "    def get(self):\n"
+                "        raise NotImplementedError\n\n"
+                "    def close(self):\n"
+                "        raise NotImplementedError\n\n"
+                "    def __iter__(self):\n"
+                "        raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_pipeline.py": (
+                "import threading\n"
+                "from pipeline import BoundedQueue\n\n\n"
+                "def test_producer_consumer():\n"
+                "    q = BoundedQueue()\n"
+                "    consumed = []\n"
+                "    def producer():\n"
+                "        for i in range(100):\n"
+                "            q.put(i)\n"
+                "        q.close()\n"
+                "    def consumer():\n"
+                "        for item in q:\n"
+                "            consumed.append(item)\n"
+                "    t1 = threading.Thread(target=producer)\n"
+                "    t2 = threading.Thread(target=consumer)\n"
+                "    t1.start()\n"
+                "    t2.start()\n"
+                "    t1.join()\n"
+                "    t2.join()\n"
+                "    assert consumed == list(range(100))\n"
+            ),
+            "test_p2p_sentinel.py": (
+                "from pipeline import Sentinel\n\n\n"
+                "def test_sentinel():\n"
+                "    assert Sentinel is not None\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    # =====================================================================
+    # parsing —— 解析/状态机（4 题）
+    # =====================================================================
+    {
+        "id": "parsing_001",
+        "category": "parsing",
+        "kind": "code_change",
+        "title": "实现四则运算表达式求值",
+        "difficulty": "hard",
+        "prompt": (
+            "evaluator.py 里的 evaluate 还没有实现。请实现它：\n"
+            "解析并计算只含整数、加减乘除和括号的表达式字符串，返回整数值。\n"
+            "注意运算符优先级和括号。不要改动已经实现的 tokenize 函数。"
+        ),
+        "setup": {
+            "evaluator.py": (
+                "def tokenize(expr):\n"
+                "    return list(expr.replace(' ', ''))\n\n\n"
+                "def evaluate(expr):\n"
+                "    raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_eval.py": (
+                "from evaluator import evaluate\n\n\n"
+                "def test_basic():\n"
+                "    assert evaluate('1+2') == 3\n\n\n"
+                "def test_precedence():\n"
+                "    assert evaluate('2+3*4') == 14\n\n\n"
+                "def test_parens():\n"
+                "    assert evaluate('(2+3)*4') == 20\n\n\n"
+                "def test_division():\n"
+                "    assert evaluate('7-3') == 4\n"
+                "    assert evaluate('8/2') == 4\n\n\n"
+                "def test_nested():\n"
+                "    assert evaluate('2*(3+(4-1))') == 12\n"
+            ),
+            "test_p2p_tokenize.py": (
+                "from evaluator import tokenize\n\n\n"
+                "def test_tokenize():\n"
+                "    assert tokenize('1 + 2') == ['1', '+', '2']\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "parsing_002",
+        "category": "parsing",
+        "kind": "code_change",
+        "title": "实现 INI 配置解析器",
+        "difficulty": "hard",
+        "prompt": (
+            "iniparse.py 里的 parse_ini 还没有实现。请实现它：\n"
+            "解析 INI 文本，返回 {section: {key: value}} 的嵌套字典。\n"
+            "规则：以 [section] 开头的行定义节；key = value 定义键值；\n"
+            "忽略空行和以 # 或 ; 开头的注释行；节名/键值去首尾空白。\n"
+            "不要改动已经实现的 strip_comment 函数。"
+        ),
+        "setup": {
+            "iniparse.py": (
+                "def strip_comment(line):\n"
+                "    return line.split('#')[0].split(';')[0].strip()\n\n\n"
+                "def parse_ini(text):\n"
+                "    raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_ini.py": (
+                "from iniparse import parse_ini\n\n\n"
+                "def test_sections():\n"
+                "    text = '[db]\\nhost = localhost\\nport = 5432\\n\\n[app]\\ndebug = true\\n'\n"
+                "    assert parse_ini(text) == {'db': {'host': 'localhost', 'port': '5432'}, 'app': {'debug': 'true'}}\n\n\n"
+                "def test_comments():\n"
+                "    text = '[s]\\n# comment\\n; another\\nkey = value\\n'\n"
+                "    assert parse_ini(text) == {'s': {'key': 'value'}}\n\n\n"
+                "def test_empty():\n"
+                "    assert parse_ini('') == {}\n"
+            ),
+            "test_p2p_strip.py": (
+                "from iniparse import strip_comment\n\n\n"
+                "def test_strip():\n"
+                "    assert strip_comment('  key = value  # note') == 'key = value'\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "parsing_003",
+        "category": "parsing",
+        "kind": "code_change",
+        "title": "实现有限状态机",
+        "difficulty": "hard",
+        "prompt": (
+            "fsm.py 里的 StateMachine 还没有实现。请实现它：\n"
+            "- 用状态转移表驱动，transitions 是 {state: {event: next_state}}\n"
+            "- trigger(event) 根据当前状态转移，返回新状态；非法转移抛 ValueError\n"
+            "- current 属性返回当前状态\n"
+            "不要改动已经实现的 make_transitions 函数。"
+        ),
+        "setup": {
+            "fsm.py": (
+                "def make_transitions():\n"
+                "    return {'idle': {'start': 'running'}, 'running': {'stop': 'idle', 'pause': 'paused'}, 'paused': {'resume': 'running'}}\n\n\n"
+                "class StateMachine:\n"
+                "    def __init__(self, initial, transitions):\n"
+                "        raise NotImplementedError\n\n"
+                "    def trigger(self, event):\n"
+                "        raise NotImplementedError\n\n"
+                "    @property\n"
+                "    def current(self):\n"
+                "        raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_fsm.py": (
+                "import pytest\n"
+                "from fsm import StateMachine, make_transitions\n\n\n"
+                "def test_transitions():\n"
+                "    sm = StateMachine('idle', make_transitions())\n"
+                "    assert sm.current == 'idle'\n"
+                "    assert sm.trigger('start') == 'running'\n"
+                "    assert sm.trigger('pause') == 'paused'\n"
+                "    assert sm.trigger('resume') == 'running'\n"
+                "    assert sm.trigger('stop') == 'idle'\n\n\n"
+                "def test_illegal():\n"
+                "    sm = StateMachine('idle', make_transitions())\n"
+                "    with pytest.raises(ValueError):\n"
+                "        sm.trigger('stop')\n"
+            ),
+            "test_p2p_transitions.py": (
+                "from fsm import make_transitions\n\n\n"
+                "def test_make():\n"
+                "    t = make_transitions()\n"
+                "    assert 'idle' in t and 'running' in t\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "parsing_004",
+        "category": "parsing",
+        "kind": "code_change",
+        "title": "实现 CSV 完整解析",
+        "difficulty": "hard",
+        "prompt": (
+            "csvparse.py 里的 parse_csv 还没有实现。请实现它：\n"
+            "把单行 CSV 文本解析成字段列表。规则：\n"
+            "- 用逗号分隔字段\n"
+            "- 用双引号包裹的字段可以包含逗号，内部连续两个双引号表示一个双引号\n"
+            "不要改动已经实现的 split_plain 函数。"
+        ),
+        "setup": {
+            "csvparse.py": (
+                "def split_plain(line):\n"
+                "    return line.split(',')\n\n\n"
+                "def parse_csv(line):\n"
+                "    raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_csv.py": (
+                "from csvparse import parse_csv\n\n\n"
+                "def test_plain():\n"
+                "    assert parse_csv('a,b,c') == ['a', 'b', 'c']\n\n\n"
+                "def test_quoted_comma():\n"
+                "    assert parse_csv('a,\"b,c\",d') == ['a', 'b,c', 'd']\n\n\n"
+                "def test_escaped_quote():\n"
+                "    assert parse_csv('\"say \"\"hi\"\"\",x') == ['say \"hi\"', 'x']\n\n\n"
+                "def test_empty_fields():\n"
+                "    assert parse_csv('a,,c') == ['a', '', 'c']\n"
+            ),
+            "test_p2p_split.py": (
+                "from csvparse import split_plain\n\n\n"
+                "def test_split():\n"
+                "    assert split_plain('x,y') == ['x', 'y']\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    # =====================================================================
+    # optimization —— 性能（4 题，大数据量约束复杂度）
+    # =====================================================================
+    {
+        "id": "optimization_001",
+        "category": "optimization",
+        "kind": "code_change",
+        "title": "实现 O(n) 两数之和",
+        "difficulty": "hard",
+        "prompt": (
+            "twosum.py 里的 two_sum 还没有实现。请实现它：\n"
+            "在 nums 里找两个下标不同的数，使它们的和等于 target，返回这两个数的下标（任意顺序）。\n"
+            "要求 O(n) 时间。输入规模可达数万，请勿用 O(n²) 暴力。\n"
+            "不要改动已经实现的 pair_sum 函数。"
+        ),
+        "setup": {
+            "twosum.py": (
+                "def pair_sum(nums, target):\n"
+                "    return None\n\n\n"
+                "def two_sum(nums, target):\n"
+                "    raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_twosum.py": (
+                "from twosum import two_sum\n\n\n"
+                "def test_small():\n"
+                "    i, j = two_sum([2, 7, 11, 15], 9)\n"
+                "    assert sorted([i, j]) == [0, 1]\n\n\n"
+                "def test_large():\n"
+                "    n = 30000\n"
+                "    nums = list(range(n))\n"
+                "    i, j = two_sum(nums, n - 2 + n - 1)\n"
+                "    assert sorted([i, j]) == [n - 2, n - 1]\n\n\n"
+                "def test_duplicates():\n"
+                "    i, j = two_sum([3, 3], 6)\n"
+                "    assert sorted([i, j]) == [0, 1]\n"
+            ),
+            "test_p2p_pair.py": (
+                "from twosum import pair_sum\n\n\n"
+                "def test_pair_sum():\n"
+                "    assert pair_sum([1, 2], 3) is None\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "optimization_002",
+        "category": "optimization",
+        "kind": "code_change",
+        "title": "实现前缀和 O(1) 区间查询",
+        "difficulty": "hard",
+        "prompt": (
+            "prefixsum.py 里的 PrefixSum 还没有实现。请实现它：\n"
+            "- __init__(nums) 预处理\n"
+            "- range_sum(i, j) 返回 nums[i..j]（含两端）之和，要求 O(1) 查询\n"
+            "不要改动已经实现的 brute_sum 函数。"
+        ),
+        "setup": {
+            "prefixsum.py": (
+                "def brute_sum(nums, i, j):\n"
+                "    return sum(nums[i:j + 1])\n\n\n"
+                "class PrefixSum:\n"
+                "    def __init__(self, nums):\n"
+                "        raise NotImplementedError\n\n"
+                "    def range_sum(self, i, j):\n"
+                "        raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_prefix.py": (
+                "from prefixsum import PrefixSum\n\n\n"
+                "def test_basic():\n"
+                "    ps = PrefixSum([1, 2, 3, 4, 5])\n"
+                "    assert ps.range_sum(1, 3) == 9\n"
+                "    assert ps.range_sum(0, 4) == 15\n\n\n"
+                "def test_large_many_queries():\n"
+                "    n = 30000\n"
+                "    nums = list(range(1, n + 1))\n"
+                "    ps = PrefixSum(nums)\n"
+                "    for _ in range(10000):\n"
+                "        assert ps.range_sum(0, n - 1) == n * (n + 1) // 2\n"
+            ),
+            "test_p2p_brute.py": (
+                "from prefixsum import brute_sum\n\n\n"
+                "def test_brute():\n"
+                "    assert brute_sum([1, 2, 3], 0, 1) == 3\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "optimization_003",
+        "category": "optimization",
+        "kind": "code_change",
+        "title": "实现迭代版斐波那契",
+        "difficulty": "hard",
+        "prompt": (
+            "fib.py 里的 fib 还没有实现。请实现它：返回第 n 个斐波那契数（0 起）。\n"
+            "要求 O(n) 时间、O(1) 空间，n 可达数万，勿用指数级递归。\n"
+            "不要改动已经实现的 fib_small 函数。"
+        ),
+        "setup": {
+            "fib.py": (
+                "def fib_small(n):\n"
+                "    a, b = 0, 1\n"
+                "    for _ in range(n):\n"
+                "        a, b = b, a + b\n"
+                "    return a\n\n\n"
+                "def fib(n):\n"
+                "    raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_fib.py": (
+                "from fib import fib\n\n\n"
+                "def test_small():\n"
+                "    assert fib(0) == 0\n"
+                "    assert fib(1) == 1\n"
+                "    assert fib(10) == 55\n\n\n"
+                "def test_large():\n"
+                "    # 用迭代自测大 n，要求秒级返回\n"
+                "    n = 200000\n"
+                "    a, b = 0, 1\n"
+                "    for _ in range(n):\n"
+                "        a, b = b, a + b\n"
+                "    assert fib(n) == a\n"
+            ),
+            "test_p2p_small.py": (
+                "from fib import fib_small\n\n\n"
+                "def test_fib_small():\n"
+                "    assert fib_small(5) == 5\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
+    {
+        "id": "optimization_004",
+        "category": "optimization",
+        "kind": "code_change",
+        "title": "实现 O(n) 有序去重",
+        "difficulty": "hard",
+        "prompt": (
+            "dedupe.py 里的 dedupe 还没有实现。请实现它：\n"
+            "去除列表中的重复元素，保持首次出现的顺序，返回新列表。\n"
+            "要求 O(n) 时间。输入规模可达数万，请勿用 O(n²) 的 in 判断。\n"
+            "不要改动已经实现的 first_occurrence 函数。"
+        ),
+        "setup": {
+            "dedupe.py": (
+                "def first_occurrence(items, target):\n"
+                "    return items.index(target)\n\n\n"
+                "def dedupe(items):\n"
+                "    raise NotImplementedError\n"
+            ),
+        },
+        "tests": {
+            "test_f2p_dedupe.py": (
+                "from dedupe import dedupe\n\n\n"
+                "def test_small():\n"
+                "    assert dedupe([1, 2, 2, 3, 1]) == [1, 2, 3]\n\n\n"
+                "def test_order():\n"
+                "    assert dedupe(['b', 'a', 'b', 'c', 'a']) == ['b', 'a', 'c']\n\n\n"
+                "def test_large():\n"
+                "    n = 30000\n"
+                "    items = [i % 1000 for i in range(n)]\n"
+                "    assert dedupe(items) == list(range(1000))\n"
+            ),
+            "test_p2p_first.py": (
+                "from dedupe import first_occurrence\n\n\n"
+                "def test_first():\n"
+                "    assert first_occurrence([5, 6, 5], 5) == 0\n"
+            ),
+        },
+        "grader": {"type": "fail_to_pass"},
+    },
 ]
 
 
@@ -1438,7 +1917,6 @@ def _write_task(t: dict[str, Any]) -> None:
     task_id = t["id"]
     category = t["category"]
 
-    # 任务定义
     yaml_body = {
         "id": task_id,
         "category": category,
@@ -1447,6 +1925,8 @@ def _write_task(t: dict[str, Any]) -> None:
         "prompt": t["prompt"],
         "timeout_seconds": t.get("timeout_seconds", 300),
         "max_retries": t.get("max_retries", 0),
+        "difficulty": t.get("difficulty", "hard"),
+        "labels": t.get("labels", []),
         "grader": t["grader"],
     }
     task_file = TASKS_DIR / f"{task_id}.yaml"
@@ -1456,7 +1936,6 @@ def _write_task(t: dict[str, Any]) -> None:
         encoding="utf-8",
     )
 
-    # 题面数据
     base = DATASETS_DIR / category / task_id
     for sub in ("setup", "tests"):
         (base / sub).mkdir(parents=True, exist_ok=True)
@@ -1475,7 +1954,6 @@ def main() -> None:
     if len(ids) != len(set(ids)):
         raise SystemExit("duplicate task id detected")
 
-    # 幂等：清空旧的生成产物，避免残留被删任务
     for d in (TASKS_DIR, DATASETS_DIR):
         if d.exists():
             shutil.rmtree(d)

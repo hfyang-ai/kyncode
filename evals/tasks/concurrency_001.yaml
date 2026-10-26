@@ -1,0 +1,19 @@
+id: concurrency_001
+category: concurrency
+kind: code_change
+title: 实现线程安全计数器
+prompt: 'counter.py 里的 ThreadSafeCounter 还没有实现。请实现它：
+
+  - increment() 每次加 1（线程安全）
+
+  - value() 返回当前值
+
+  要求：多线程并发调用 increment() 时结果必须精确无误。
+
+  不要改动已经实现的 describe 函数。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

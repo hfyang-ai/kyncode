@@ -1,0 +1,19 @@
+id: parsing_002
+category: parsing
+kind: code_change
+title: 实现 INI 配置解析器
+prompt: 'iniparse.py 里的 parse_ini 还没有实现。请实现它：
+
+  解析 INI 文本，返回 {section: {key: value}} 的嵌套字典。
+
+  规则：以 [section] 开头的行定义节；key = value 定义键值；
+
+  忽略空行和以 # 或 ; 开头的注释行；节名/键值去首尾空白。
+
+  不要改动已经实现的 strip_comment 函数。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

@@ -1,11 +1,15 @@
 id: bugfix_003
 category: bugfix
 kind: code_change
-title: 修复重复次数少一
-prompt: 'work.py 的 repeat(s, n) 应该把字符串 s 重复 n 次，但现在少重复了一次。
+title: 缓存返回内部引用被外部篡改
+prompt: '配置中心维护一个配置字典，get() 会缓存读取结果。
 
-  请修复。'
+  用户反馈：某个调用方修改了拿到的配置后，其他调用方读到的值也被污染了。
+
+  请排查引用/拷贝问题并修复，使每次 get() 返回独立副本、互不影响。'
 timeout_seconds: 300
 max_retries: 0
+difficulty: hard
+labels: []
 grader:
   type: fail_to_pass

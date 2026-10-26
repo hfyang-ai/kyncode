@@ -1,11 +1,15 @@
 id: bugfix_001
 category: bugfix
 kind: code_change
-title: 修复除零错误
-prompt: 'work.py 的 divide(a, b) 在 b 为 0 时会崩溃。
+title: 跨层类型污染导致静默错误
+prompt: '用户反馈：订单总价算出来明显不对，但程序没有报任何错误。
 
-  请修复它，使得当除数为 0 时返回 0，其余情况正常相除。'
+  相关模块：inventory（库存定价）→ pricing（计价）→ order（汇总）。
+
+  请排查并修复根因，使订单总价返回正确的数值。'
 timeout_seconds: 300
 max_retries: 0
+difficulty: hard
+labels: []
 grader:
   type: fail_to_pass

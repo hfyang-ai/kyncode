@@ -178,7 +178,8 @@ def _run_pytest(workspace: Path, test_files: list[str]) -> list[str]:
     failed: list[str] = []
     for line in (proc.stdout + "\n" + proc.stderr).splitlines():
         line = line.strip()
-        if line.startswith("FAILED"):
-            # 形如 "FAILED test_x.py::test_y" 或 "FAILED ../../test_x.py::test_y"
+        # FAILED：测试断言失败；ERROR：collection error（导入失败/循环导入/语法错误等）
+        # 形如 "FAILED test_x.py::test_y" 或 "ERROR test_x.py"
+        if line.startswith("FAILED") or line.startswith("ERROR"):
             failed.append(line.split("::")[-1] if "::" in line else line)
     return failed

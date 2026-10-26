@@ -1,0 +1,20 @@
+id: long_task_002
+category: long_task
+kind: code_change
+title: 长流水线多环节错误定位与交叉校验
+prompt: '项目里有 20 个处理环节 stage_00.py 到 stage_19.py，pipeline.py 把它们串成流水线，
+
+  cross.py 交叉引用 stage_00 和 stage_19 做聚合校验。
+
+  每个 stage 的 transform(x) 应该返回 x + 该环节编号。
+
+  但 pipeline 的最终输出不对，说明其中有不止一个环节实现有误。
+
+  请在整个流水线中定位出所有错误环节并修复，使 pipeline.run(0) 和 cross.aggregate(0) 都返回正确结果。'
+timeout_seconds: 600
+max_retries: 0
+difficulty: hard
+labels:
+- long
+grader:
+  type: fail_to_pass

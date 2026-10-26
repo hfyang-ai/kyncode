@@ -1,9 +1,0 @@
-id: refactor_004
-category: refactor
-kind: code_change
-title: 消除魔法数字
-prompt: code.py 里多处硬编码了 3.14。请定义常量 PI = 3.14，并让所有函数改用 PI。
-timeout_seconds: 300
-max_retries: 0
-grader:
-  type: fail_to_pass

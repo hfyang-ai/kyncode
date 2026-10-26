@@ -1,0 +1,13 @@
+id: debug_002
+category: debug
+kind: code_change
+title: 修复闰年二月天数
+prompt: '运行 pytest 会发现 test_work.py 失败：days_in_month 对平年 2 月返回了 29 天。
+
+  阅读失败信息，修复二月天数的判断（平年 28 天、闰年 29 天，注意整百年规则）。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

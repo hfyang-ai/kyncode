@@ -1,23 +1,28 @@
 # KynCode Evals
 
-KynCode 的自动化测评框架。用 50 道题覆盖 KynCode 的核心能力（文件读取、跨文件修改、Bug 修复、测试失败处理、工具错误恢复、长上下文），驱动 agent headless 执行，自动评分并产出指标报告。
+KynCode 的自动化测评框架。用 36 道高难度题覆盖 KynCode 的核心能力（多文件复合 bug 定位、非平凡实现补全、跨文件重构、失败测试驱动修复、导入错误恢复、算法、并发、解析、性能优化、长任务），驱动 agent headless 执行，自动评分并产出指标报告。
 
 ## 目录结构
 
 ```
 evals/
 ├── datasets/            # 题面数据（按类别归组）
-│   ├── basic/           # 基础：文件读取 + 跨文件修改（15 题）
-│   ├── bugfix/          # Bug 修复 + 测试失败处理（15 题）
-│   ├── tool_error/      # 工具错误恢复（5 题）
-│   ├── long_context/    # 长上下文（10 题）
-│   └── refactor/        # 重构 / 多文件综合（5 题）
+│   ├── bugfix/          # 多文件复合 bug 定位（4 题）
+│   ├── feature/         # 非平凡实现补全（4 题）
+│   ├── refactor/        # 跨文件重构保行为（3 题）
+│   ├── debug/           # 失败测试驱动修复（4 题）
+│   ├── tool_recovery/   # 导入错误恢复（3 题）
+│   ├── algorithm/       # 算法实现（4 题）
+│   ├── concurrency/     # 并发（4 题）
+│   ├── parsing/         # 解析/状态机（4 题）
+│   ├── optimization/    # 性能优化（4 题）
+│   └── long_task/       # 长任务（2 题）
 │       └── <task_id>/
 │           ├── setup/   # 初始代码（agent 的初始工作目录）
 │           └── tests/   # 隐藏测试（grader 才用，agent 不可见）
 ├── tasks/               # 每道题的任务定义 <task_id>.yaml（prompt + 判分配置）
 ├── scripts/
-│   └── generate_tasks.py  # 数据驱动生成 50 道题（幂等）
+│   └── generate_tasks.py  # 数据驱动生成 36 道题（幂等）
 ├── tasklib.py           # 核心模型：任务加载 / 状态机 / 结果 dataclass
 ├── adapter.py           # Agent Adapter：统一 CLI 调用接口（Protocol）
 ├── environment.py       # Environment Manager：隔离工作区 + 初始快照 + diff
@@ -35,7 +40,7 @@ evals/
 ## 快速开始
 
 ```bash
-# 1. 生成 50 道题（幂等，可重复执行）
+# 1. 生成 36 道题（幂等，可重复执行）
 python scripts/generate_tasks.py
 
 # 2a. 离线 mock 模式：不调真实 API，用合成数据跑通全流程并出示例报告
@@ -48,13 +53,30 @@ python runner.py --live --category bugfix
 python runner.py --report-only results/<run_id>
 ```
 
+## 任务类别
+
+共 36 题，全部为高难度（`difficulty: hard`）：
+
+| 类别 | 数量 | 考察点 |
+| --- | --- | --- |
+| `bugfix` | 4 | 多文件复合 bug 跨层追根（类型污染 / 状态机非法转换 / 缓存引用泄漏 / 递归遍历） |
+| `feature` | 4 | 非平凡实现（任务调度器 / 配置合并 / 事件总线 / semver 比较） |
+| `refactor` | 3 | 跨文件重构保行为（模板方法 / 过程式转类 / 拆模块消循环依赖） |
+| `debug` | 4 | 失败测试驱动修复（快排分区 / 闰年二月 / 贪心找零 / 字节解码） |
+| `tool_recovery` | 3 | 导入错误恢复（三方循环导入 / 包内相对导入 / 弃用 API shim） |
+| `algorithm` | 4 | 算法实现（拓扑排序 / 并查集 / 滑动窗口 / 区间合并） |
+| `concurrency` | 4 | 并发（线程安全计数器 / 线程安全 KV / asyncio 聚合 / 生产者消费者） |
+| `parsing` | 4 | 解析/状态机（表达式求值 / INI / 有限状态机 / CSV） |
+| `optimization` | 4 | 性能（两数之和 / 前缀和 / 斐波那契 / 有序去重，大数据量约束复杂度） |
+| `long_task` | 2 | 长任务（多模块迷你框架 + 长流水线交叉依赖） |
+
 ## 任务格式
 
 每道题 `tasks/<task_id>.yaml`：
 
 ```yaml
 id: bugfix_001
-category: bugfix            # basic | bugfix | tool_error | long_context | refactor
+category: bugfix            # bugfix | feature | refactor | debug | tool_recovery | algorithm | concurrency | parsing | optimization | long_task
 kind: code_change           # code_change | answer_match | file_assert
 title: 修复除零错误
 prompt: |                   # 给 agent 的自然语言指令
@@ -139,7 +161,7 @@ results/<run_id>/
 每次测评产出 `results/<run_id>/report.md`，包含：
 
 - 追踪指标汇总表（含实测数据）
-- 分类别明细（basic / bugfix / tool_error / long_context / refactor）
+- 分类别明细（bugfix / feature / refactor / debug / tool_recovery / algorithm / concurrency / parsing / optimization / long_task）
 - 基础设施故障清单
 - 未解决任务清单 + 失败原因
 - **项目功能不足总结**（从失败任务归因出的能力短板）

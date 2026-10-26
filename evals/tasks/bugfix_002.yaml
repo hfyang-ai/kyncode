@@ -1,11 +1,17 @@
 id: bugfix_002
 category: bugfix
 kind: code_change
-title: 修复 off-by-one
-prompt: 'work.py 的 last(items) 想返回列表最后一个元素，但现在会抛 IndexError。
+title: 订单状态机非法转换未拦截
+prompt: '订单系统有状态机：pending → paid → shipped → delivered。
 
-  请修复索引错误，使其正确返回最后一个元素。'
+  业务规则：只能沿这条路径前进；cancel 只允许在 pending 或 paid 状态；已 delivered 的订单不能再做任何转换。
+
+  用户反馈：一个已经 delivered 的订单居然还能被 cancel。
+
+  请排查状态机的转换逻辑并修复，使所有非法转换都被拒绝。'
 timeout_seconds: 300
 max_retries: 0
+difficulty: hard
+labels: []
 grader:
   type: fail_to_pass

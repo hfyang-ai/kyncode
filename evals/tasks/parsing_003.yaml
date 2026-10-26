@@ -1,0 +1,19 @@
+id: parsing_003
+category: parsing
+kind: code_change
+title: 实现有限状态机
+prompt: 'fsm.py 里的 StateMachine 还没有实现。请实现它：
+
+  - 用状态转移表驱动，transitions 是 {state: {event: next_state}}
+
+  - trigger(event) 根据当前状态转移，返回新状态；非法转移抛 ValueError
+
+  - current 属性返回当前状态
+
+  不要改动已经实现的 make_transitions 函数。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

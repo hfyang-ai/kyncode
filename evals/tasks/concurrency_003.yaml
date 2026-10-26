@@ -1,0 +1,15 @@
+id: concurrency_003
+category: concurrency
+kind: code_change
+title: 实现 asyncio 并发聚合
+prompt: 'fetcher.py 里的 fetch_all 还没有实现。请实现它：
+
+  并发调用 fetch(url) 获取所有 url 的结果，返回按输入顺序排列的结果列表。
+
+  不要改动已经实现的 fetch 函数。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

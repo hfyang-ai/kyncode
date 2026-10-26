@@ -1,0 +1,21 @@
+id: concurrency_002
+category: concurrency
+kind: code_change
+title: 实现线程安全键值存储
+prompt: 'kv.py 里的 ThreadSafeKV 还没有实现。请实现它：
+
+  - get(key, default=None)
+
+  - set(key, value)
+
+  - delete(key)
+
+  要求：多线程并发读写时不会丢失更新、不会崩溃。
+
+  不要改动已经实现的 keys_of 函数。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

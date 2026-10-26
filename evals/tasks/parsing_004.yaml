@@ -1,0 +1,19 @@
+id: parsing_004
+category: parsing
+kind: code_change
+title: 实现 CSV 完整解析
+prompt: 'csvparse.py 里的 parse_csv 还没有实现。请实现它：
+
+  把单行 CSV 文本解析成字段列表。规则：
+
+  - 用逗号分隔字段
+
+  - 用双引号包裹的字段可以包含逗号，内部连续两个双引号表示一个双引号
+
+  不要改动已经实现的 split_plain 函数。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

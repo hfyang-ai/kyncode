@@ -1,11 +1,15 @@
 id: refactor_002
 category: refactor
 kind: code_change
-title: 移动函数到新模块
-prompt: 'utils.py 里有 helper_a 和 helper_b 两个函数。
+title: 过程式代码重构为类并向后兼容
+prompt: 'stats.py 用模块级变量和多个函数维护统计数据，状态容易互相污染。
 
-  把 helper_b 移到新建的 newmod.py，并在 utils.py 里通过导入保持可访问。'
+  请重构为 Stats 类（add(n) / mean() / count()），用实例封装状态；
+
+  同时保留模块级的 add/mean/count 函数作为默认实例的便捷入口（向后兼容）。'
 timeout_seconds: 300
 max_retries: 0
+difficulty: hard
+labels: []
 grader:
   type: fail_to_pass
