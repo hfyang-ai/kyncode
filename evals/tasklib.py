@@ -165,6 +165,7 @@ class Attempt:
     stop_reason: str
     final_text: str
     raw_ndjson: list[str] = field(default_factory=list)
+    trace: list[dict[str, Any]] = field(default_factory=list)  # 精炼工具轨迹（LLM 失败分析用）
     grade: GraderResult = field(default_factory=GraderResult)
 
     @property

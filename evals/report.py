@@ -286,8 +286,10 @@ def _core_metrics(m: dict[str, Any]) -> str:
 def _task_breakdown(outcomes: list[TaskOutcome]) -> str:
     bd = category_breakdown(outcomes)
     order = ["basic", "bugfix", "tool_error", "long_context", "refactor"]
+    # 追加 order 之外的类别（如 Terminal-Bench 的 file-operations 等），保证都进表格
+    ordered = order + [c for c in bd if c not in order]
     lines = ["| 类别 | 样本数 | 解决数 | 解决率 |", "| --- | --- | --- | --- |"]
-    for c in order:
+    for c in ordered:
         if c not in bd:
             continue
         b = bd[c]

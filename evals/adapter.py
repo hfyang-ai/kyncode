@@ -129,18 +129,17 @@ class CLIAgentAdapter:
     def _inject_agent_config(self, workspace: Path) -> None:
         """把精简的 agent config 注入到 workspace，让 agent 能找到 provider 配置。
 
-        仅在配置了 ``agent_config`` 且 workspace 里还没有 config 时写入。
-        复用 agent_config 的 providers 与 permission_mode，mcp_servers 置空
-        （eval 场景下 npx 启动 MCP 会卡住或拉长启动时间）。
+        复用 agent_config 的 providers，mcp_servers 置空（eval 场景下 npx 启动
+        MCP 会卡住或拉长启动时间）。题目 setup 可自带 config.yaml 声明评测约束
+        （hooks / permission_mode），但不带 providers（API key 不进题面）——这里
+        合并：providers 始终来自 agent_config，hooks / permission_mode 优先取题目
+        自带的覆盖，其余字段回退到 agent_config。
         """
         if not self.agent_config:
             return
         src = Path(self.agent_config)
         if not src.exists():
             return
-        dst = workspace / "config.yaml"
-        if dst.exists():
-            return  # 题目 setup 自带 config，尊重它
         try:
             raw = yaml.safe_load(src.read_text(encoding="utf-8")) or {}
         except (OSError, yaml.YAMLError):
@@ -150,6 +149,17 @@ class CLIAgentAdapter:
             "permission_mode": raw.get("permission_mode", "default"),
             "mcp_servers": [],
         }
+        dst = workspace / "config.yaml"
+        task_cfg: dict[str, Any] = {}
+        if dst.exists():
+            try:
+                task_cfg = yaml.safe_load(dst.read_text(encoding="utf-8")) or {}
+            except (OSError, yaml.YAMLError):
+                task_cfg = {}
+        if task_cfg.get("hooks"):
+            slim["hooks"] = task_cfg["hooks"]
+        if task_cfg.get("permission_mode"):
+            slim["permission_mode"] = task_cfg["permission_mode"]
         dst.write_text(
             yaml.safe_dump(slim, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
@@ -224,3 +234,63 @@ def _parse_ndjson(stdout: str) -> dict[str, Any]:
         "errors": errors,
         "stop_reason": stop_reason,
     }
+
+
+def _truncate_text(text: str, max_chars: int) -> str:
+    """截断长文本，保留头尾，超长加省略标记。"""
+    if len(text) <= max_chars:
+        return text
+    head = max_chars // 2
+    tail = max_chars // 2
+    return text[:head] + f"\n...[truncated {len(text) - max_chars} chars]...\n" + text[-tail:]
+
+
+def parse_trace(stdout: str) -> list[dict[str, Any]]:
+    """从 stream-json 提取精炼的工具调用轨迹，供 LLM 失败分析使用。
+
+    每个 turn：``{"turn", "tool", "args", "output", "is_error", "elapsed"}``。
+    ``tool_use``（含 args）与 ``tool_result``（含 output/is_error/elapsed）按
+    ``tool_id`` 配对；错误结果保留更长输出（2000 字符）以便定位根因。
+    """
+    trace: list[dict[str, Any]] = []
+    pending: dict[str, dict[str, Any]] = {}
+    turn = 0
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            evt = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        etype = evt.get("type")
+        if etype == "tool_use":
+            tid = str(evt.get("tool_id") or turn)
+            args = evt.get("args")
+            pending[tid] = {
+                "turn": turn,
+                "tool": evt.get("tool_name", ""),
+                "args": _truncate_text(json.dumps(args, ensure_ascii=False), 500)
+                if args is not None
+                else "",
+                "is_error": False,
+                "output": "",
+                "elapsed": 0.0,
+            }
+            turn += 1
+        elif etype == "tool_result":
+            tid = str(evt.get("tool_id") or "")
+            entry = pending.pop(tid, None) if tid else None
+            if entry is None and pending:
+                # tool_id 缺失/不匹配时，配对最近一个未完成的工具调用
+                entry = pending.pop(next(reversed(pending)))
+            if entry is None:
+                continue
+            is_error = bool(evt.get("is_error", False))
+            entry["output"] = _truncate_text(
+                str(evt.get("output", "")), 2000 if is_error else 500
+            )
+            entry["is_error"] = is_error
+            entry["elapsed"] = evt.get("elapsed", 0.0)
+            trace.append(entry)
+    return trace

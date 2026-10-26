@@ -41,6 +41,7 @@ def main() -> None:
     parser.add_argument("--retries", type=int, default=None, help="覆盖默认重试次数")
     parser.add_argument("--report-only", help="从已有 results/<run_id> 重算报告")
     parser.add_argument("--compare", help="对比基线 run_id（读取 results/<id>/grades.json）")
+    parser.add_argument("--no-llm-report", action="store_true", help="禁用 LLM 报告生成，用规则模板")
     args = parser.parse_args()
 
     cfg = EvalConfig.load(ROOT / "config.yaml")
@@ -56,7 +57,10 @@ def main() -> None:
         baseline_outcomes = _outcomes_from_grades(baseline_dir)
 
     if args.report_only:
-        _recompute_report(Path(args.report_only), cfg, baseline_outcomes)
+        _recompute_report(
+            Path(args.report_only), cfg, baseline_outcomes,
+            use_llm=not args.no_llm_report,
+        )
         return
 
     specs = discover_tasks(ROOT / "tasks", ROOT / "datasets")
@@ -90,7 +94,10 @@ def main() -> None:
 
     # 保留 grades.json 便于向后兼容与 --report-only 复算
     _write_grades(run_dir, outcomes)
-    _write_report(run_dir, run_id, mode, cfg, outcomes, baseline_outcomes)
+    _write_report(
+        run_dir, run_id, mode, cfg, outcomes, baseline_outcomes,
+        use_llm=not args.no_llm_report,
+    )
 
 
 def _write_grades(run_dir: Path, outcomes: list[TaskOutcome]) -> None:
@@ -134,9 +141,9 @@ def _write_report(
     cfg: EvalConfig,
     outcomes: list[TaskOutcome],
     baseline_outcomes: list[TaskOutcome] | None = None,
+    use_llm: bool = True,
 ) -> None:
     from metrics import compare_runs, compute_metrics
-    from report import render_report
 
     pricing = getattr(cfg, "pricing", None)
     metrics = compute_metrics(outcomes, pricing)
@@ -147,23 +154,24 @@ def _write_report(
         else None
     )
     baseline = compare_runs(outcomes, baseline_outcomes) if baseline_outcomes else None
-    report = render_report(
-        run_id, mode, cfg.agent_bin, metrics, outcomes,
-        manifest=manifest, baseline=baseline,
+    report, tag = _render_report(
+        run_id, mode, cfg, metrics, outcomes, manifest, baseline, use_llm
     )
     (run_dir / "report.md").write_text(report, encoding="utf-8")
-    print(f"\n完成。报告: {run_dir / 'report.md'}")
+    print(f"\n{tag}报告: {run_dir / 'report.md'}")
 
 
 def _recompute_report(
-    run_dir: Path, cfg: EvalConfig, baseline_outcomes: list[TaskOutcome] | None = None
+    run_dir: Path,
+    cfg: EvalConfig,
+    baseline_outcomes: list[TaskOutcome] | None = None,
+    use_llm: bool = True,
 ) -> None:
     if not (run_dir / "grades.json").exists():
         print(f"未找到 {run_dir}/grades.json", file=sys.stderr)
         sys.exit(1)
     outcomes = _outcomes_from_grades(run_dir)
     from metrics import compare_runs, compute_metrics
-    from report import render_report
 
     metrics = compute_metrics(outcomes, getattr(cfg, "pricing", None))
     manifest = (
@@ -172,12 +180,43 @@ def _recompute_report(
         else None
     )
     baseline = compare_runs(outcomes, baseline_outcomes) if baseline_outcomes else None
-    report = render_report(
-        run_dir.name, "recompute", cfg.agent_bin, metrics, outcomes,
-        manifest=manifest, baseline=baseline,
+    report, tag = _render_report(
+        run_dir.name, "recompute", cfg, metrics, outcomes, manifest, baseline, use_llm
     )
     (run_dir / "report.md").write_text(report, encoding="utf-8")
-    print(f"报告已重算: {run_dir / 'report.md'}")
+    print(f"{tag}报告已重算: {run_dir / 'report.md'}")
+
+
+def _render_report(
+    run_id: str,
+    mode: str,
+    cfg: EvalConfig,
+    metrics: dict,
+    outcomes: list[TaskOutcome],
+    manifest: dict | None,
+    baseline: dict | None,
+    use_llm: bool,
+) -> tuple[str, str]:
+    """生成报告，返回 (report_md, 来源标签)。LLM 失败时回退规则模板。"""
+    if use_llm:
+        from report_llm import render_llm_report
+
+        p = Path(cfg.agent_config) if cfg.agent_config else None
+        agent_config_path = None
+        if p is not None:
+            agent_config_path = p if p.is_absolute() else (ROOT / p).resolve()
+        report, used_llm = render_llm_report(
+            run_id, mode, cfg.agent_bin, metrics, outcomes,
+            manifest=manifest, baseline=baseline, agent_config_path=agent_config_path,
+        )
+        return report, "LLM 生成" if used_llm else "规则模板（LLM 失败回退）"
+    from report import render_report
+
+    report = render_report(
+        run_id, mode, cfg.agent_bin, metrics, outcomes,
+        manifest=manifest, baseline=baseline,
+    )
+    return report, "规则模板"
 
 
 def _outcomes_from_grades(run_dir: Path) -> list[TaskOutcome]:

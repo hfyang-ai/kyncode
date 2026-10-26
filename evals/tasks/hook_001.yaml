@@ -1,0 +1,13 @@
+id: hook_001
+category: hook
+kind: code_change
+title: 钩子禁用 Bash，改用文件工具修复
+prompt: 'sum.py 的 total 函数有 bug。
+
+  注意：环境配置了钩子，禁止使用 Bash 工具。请只用文件读写工具（Read/Edit/Write）修复，不要尝试运行任何命令。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

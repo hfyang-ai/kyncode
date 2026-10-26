@@ -1,0 +1,13 @@
+id: hook_002
+category: hook
+kind: code_change
+title: 钩子禁用 WriteFile，改用 EditFile 修复
+prompt: 'text.py 的 greet 函数返回了 ''hi''，正确应返回 ''hello''。
+
+  注意：环境配置了钩子，禁止使用 WriteFile 工具新建/覆盖文件。请用 EditFile 原地修改 text.py。'
+timeout_seconds: 300
+max_retries: 0
+difficulty: hard
+labels: []
+grader:
+  type: fail_to_pass

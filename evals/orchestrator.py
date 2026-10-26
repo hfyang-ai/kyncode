@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from adapter import AgentAdapter, AgentRequest, CLIAgentAdapter
+from adapter import AgentAdapter, AgentRequest, CLIAgentAdapter, parse_trace
 from environment import EnvironmentManager
 from store import RunStore, make_event, now_iso
 from tasklib import (
@@ -140,6 +140,7 @@ class Orchestrator:
             stop_reason=result.stop_reason,
             final_text=result.final_text,
             raw_ndjson=result.raw_ndjson,
+            trace=parse_trace(result.stdout),
             grade=grader_result,
         )
 

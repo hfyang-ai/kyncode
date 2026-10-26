@@ -176,6 +176,8 @@ def resolved_list(outcomes: list[TaskOutcome]) -> list[dict[str, Any]]:
                 passed = best.grade.detail if best and best.grade.detail else "测试通过"
         elif o.spec.kind == "answer_match":
             passed = "答案匹配"
+        elif o.spec.kind == "terminal":
+            passed = f"{f2p} 个测试通过"
         else:
             passed = "文件断言通过"
         rows.append(
