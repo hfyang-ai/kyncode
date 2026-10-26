@@ -1,6 +1,0 @@
---- a/work.py
-+++ b/work.py
-@@ -1,2 +1,2 @@
- def square(n):
--    return str(n * n)
-+    return n * n

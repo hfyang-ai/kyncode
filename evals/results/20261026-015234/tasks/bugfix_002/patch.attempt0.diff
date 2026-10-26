@@ -1,6 +1,0 @@
---- a/work.py
-+++ b/work.py
-@@ -1,2 +1,2 @@
- def last(items):
--    return items[len(items)]
-+    return items[-1]

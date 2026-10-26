@@ -1,9 +1,0 @@
---- a/work.py
-+++ b/work.py
-@@ -2,5 +2,5 @@
-     if value < lo:
-         return lo
-     if value > hi:
--        return lo
-+        return hi
-     return value

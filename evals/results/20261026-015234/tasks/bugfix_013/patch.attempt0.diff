@@ -1,9 +1,0 @@
---- a/work.py
-+++ b/work.py
-@@ -1,5 +1,2 @@
- def parse_int(s):
--    try:
--        return int(s)
--    except ValueError:
--        return 0
-+    return int(s)

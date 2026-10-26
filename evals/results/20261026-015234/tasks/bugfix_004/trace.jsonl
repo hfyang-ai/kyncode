@@ -1,3 +1,0 @@
-{"ts": "2026-10-26T01:53:05Z", "type": "attempt_started", "attempt": 0, "max_attempts": 1}
-{"ts": "2026-10-26T01:53:15Z", "type": "agent_finished", "attempt": 0, "status": "success"}
-{"ts": "2026-10-26T01:53:15Z", "type": "task_finished", "status": "completed", "resolved": true}
