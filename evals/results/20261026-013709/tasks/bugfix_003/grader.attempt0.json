@@ -1,0 +1,12 @@
+{
+  "resolved": false,
+  "fail_to_pass_passed": [],
+  "pass_to_pass_passed": [],
+  "failed": [
+    "test_f2p_target"
+  ],
+  "p2p_failed": [],
+  "detail": "mock: 未能通过 FAIL_TO_PASS 测试",
+  "infra_failure": false,
+  "answer_matched": false
+}

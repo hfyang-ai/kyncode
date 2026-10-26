@@ -1,0 +1,8 @@
+--- a/work.py
++++ b/work.py
+@@ -2,4 +2,4 @@
+ 
+ 
+ def extract_digits(s):
+-    return re.findall(r'[a-z]+', s)
++    return re.findall(r'\d+', s)

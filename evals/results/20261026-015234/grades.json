@@ -1,0 +1,392 @@
+[
+  {
+    "id": "bugfix_001",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 7.99,
+        "input_tokens": 5803,
+        "output_tokens": 370,
+        "num_turns": 5,
+        "tool_calls_count": 4,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_002",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 10.36,
+        "input_tokens": 6067,
+        "output_tokens": 574,
+        "num_turns": 6,
+        "tool_calls_count": 5,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_003",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 8.43,
+        "input_tokens": 5957,
+        "output_tokens": 362,
+        "num_turns": 6,
+        "tool_calls_count": 5,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_004",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 8.27,
+        "input_tokens": 6071,
+        "output_tokens": 386,
+        "num_turns": 6,
+        "tool_calls_count": 5,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_005",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 11.27,
+        "input_tokens": 5934,
+        "output_tokens": 880,
+        "num_turns": 6,
+        "tool_calls_count": 5,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_006",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 7.43,
+        "input_tokens": 5924,
+        "output_tokens": 281,
+        "num_turns": 5,
+        "tool_calls_count": 4,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_007",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 7.05,
+        "input_tokens": 5873,
+        "output_tokens": 315,
+        "num_turns": 5,
+        "tool_calls_count": 4,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_008",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 5.87,
+        "input_tokens": 5710,
+        "output_tokens": 302,
+        "num_turns": 4,
+        "tool_calls_count": 3,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_009",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 8.07,
+        "input_tokens": 5754,
+        "output_tokens": 480,
+        "num_turns": 5,
+        "tool_calls_count": 5,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_010",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 6.68,
+        "input_tokens": 6218,
+        "output_tokens": 359,
+        "num_turns": 5,
+        "tool_calls_count": 5,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_011",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 11.32,
+        "input_tokens": 6700,
+        "output_tokens": 677,
+        "num_turns": 8,
+        "tool_calls_count": 8,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_012",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 10.24,
+        "input_tokens": 9011,
+        "output_tokens": 549,
+        "num_turns": 7,
+        "tool_calls_count": 8,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_013",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 9.9,
+        "input_tokens": 6131,
+        "output_tokens": 497,
+        "num_turns": 6,
+        "tool_calls_count": 7,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_014",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 11.84,
+        "input_tokens": 8802,
+        "output_tokens": 901,
+        "num_turns": 7,
+        "tool_calls_count": 7,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  },
+  {
+    "id": "bugfix_015",
+    "category": "bugfix",
+    "resolved": true,
+    "status": "completed",
+    "infra_failure": false,
+    "timed_out": false,
+    "attempts": [
+      {
+        "index": 0,
+        "success": true,
+        "duration_seconds": 12.06,
+        "input_tokens": 8787,
+        "output_tokens": 876,
+        "num_turns": 7,
+        "tool_calls_count": 8,
+        "errors": [],
+        "grade": {
+          "resolved": true,
+          "failed": [],
+          "p2p_failed": [],
+          "detail": "F2P 通过，P2P 通过"
+        }
+      }
+    ]
+  }
+]

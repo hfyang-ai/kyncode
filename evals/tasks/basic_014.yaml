@@ -1,0 +1,11 @@
+id: basic_014
+category: basic
+kind: code_change
+title: 移动常量到独立模块
+prompt: 'logic.py 里硬编码了 MAX_RETRY = 3。把它移到新建的 constants.py，
+
+  并让 logic.py 从 constants 导入使用。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

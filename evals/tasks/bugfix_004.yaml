@@ -1,0 +1,11 @@
+id: bugfix_004
+category: bugfix
+kind: code_change
+title: 修复空列表边界
+prompt: 'work.py 的 first(items) 在 items 为空时会抛 IndexError。
+
+  请修复，使得空列表时返回 None，其余情况返回第一个元素。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

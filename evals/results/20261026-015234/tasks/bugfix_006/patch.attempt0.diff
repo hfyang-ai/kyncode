@@ -1,0 +1,6 @@
+--- a/work.py
++++ b/work.py
+@@ -1,2 +1,2 @@
+ def is_adult(age):
+-    return age > 18
++    return age >= 18

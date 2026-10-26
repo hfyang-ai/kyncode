@@ -1,0 +1,11 @@
+id: bugfix_003
+category: bugfix
+kind: code_change
+title: 修复重复次数少一
+prompt: 'work.py 的 repeat(s, n) 应该把字符串 s 重复 n 次，但现在少重复了一次。
+
+  请修复。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

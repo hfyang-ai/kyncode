@@ -1,0 +1,11 @@
+id: bugfix_006
+category: bugfix
+kind: code_change
+title: 修复边界比较符号
+prompt: 'work.py 的 is_adult(age) 判断是否成年，但当前 18 岁被判断为未成年。
+
+  请修复比较符号，使 18 岁及以上算成年。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

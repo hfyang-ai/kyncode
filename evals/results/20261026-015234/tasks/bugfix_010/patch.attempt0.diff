@@ -1,0 +1,9 @@
+--- a/work.py
++++ b/work.py
+@@ -1,2 +1,5 @@
++import os
++
++
+ def config_path(dir):
+-    return dir + '/config.yaml'
++    return os.path.join(dir, 'config.yaml')

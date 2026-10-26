@@ -1,0 +1,12 @@
+id: basic_007
+category: basic
+kind: answer_match
+title: 从 CSV 提取统计
+prompt: 'data.csv 的列是 name,age。找出 age 列的最大值。
+
+  只输出一个整数。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: answer_match
+  answer_pattern: \b42\b

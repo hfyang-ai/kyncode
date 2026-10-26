@@ -1,0 +1,10 @@
+{
+  "resolved": false,
+  "fail_to_pass_passed": [],
+  "pass_to_pass_passed": [],
+  "failed": [],
+  "p2p_failed": [],
+  "detail": "infra failure: API/Docker 服务不可用",
+  "infra_failure": true,
+  "answer_matched": false
+}

@@ -1,0 +1,11 @@
+id: long_context_005
+category: long_context
+kind: code_change
+title: 拆分大文件为多模块
+prompt: '把 big.py 拆成两个模块：func_0 到 func_5 移到 a.py，func_6 到 func_11 移到 b.py。
+
+  拆分后 a.py、b.py 应能被正常导入，原函数行为不变。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

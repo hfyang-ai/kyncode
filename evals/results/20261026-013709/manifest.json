@@ -1,0 +1,365 @@
+{
+  "run_id": "20261026-013709",
+  "agent_bin": "kyncode",
+  "agent_version": "",
+  "model": "",
+  "mode": "mock",
+  "started_at": "2026-10-26T01:37:09Z",
+  "config": {
+    "default_timeout_seconds": 600,
+    "default_retries": 0,
+    "work_root": "results"
+  },
+  "tasks": [
+    {
+      "id": "basic_001",
+      "category": "basic",
+      "kind": "answer_match",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_002",
+      "category": "basic",
+      "kind": "answer_match",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_003",
+      "category": "basic",
+      "kind": "answer_match",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_004",
+      "category": "basic",
+      "kind": "answer_match",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_005",
+      "category": "basic",
+      "kind": "answer_match",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_006",
+      "category": "basic",
+      "kind": "answer_match",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_007",
+      "category": "basic",
+      "kind": "answer_match",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_008",
+      "category": "basic",
+      "kind": "answer_match",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_009",
+      "category": "basic",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_010",
+      "category": "basic",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_011",
+      "category": "basic",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_012",
+      "category": "basic",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_013",
+      "category": "basic",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_014",
+      "category": "basic",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "basic_015",
+      "category": "basic",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_001",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_002",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_003",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_004",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_005",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_006",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_007",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_008",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_009",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_010",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_011",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_012",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_013",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_014",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "bugfix_015",
+      "category": "bugfix",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "long_context_001",
+      "category": "long_context",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "long_context_002",
+      "category": "long_context",
+      "kind": "answer_match",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "long_context_003",
+      "category": "long_context",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "long_context_004",
+      "category": "long_context",
+      "kind": "answer_match",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "long_context_005",
+      "category": "long_context",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "long_context_006",
+      "category": "long_context",
+      "kind": "answer_match",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "long_context_007",
+      "category": "long_context",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "long_context_008",
+      "category": "long_context",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "long_context_009",
+      "category": "long_context",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "long_context_010",
+      "category": "long_context",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "refactor_001",
+      "category": "refactor",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "refactor_002",
+      "category": "refactor",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "refactor_003",
+      "category": "refactor",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "refactor_004",
+      "category": "refactor",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "refactor_005",
+      "category": "refactor",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "tool_error_001",
+      "category": "tool_error",
+      "kind": "answer_match",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "tool_error_002",
+      "category": "tool_error",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "tool_error_003",
+      "category": "tool_error",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "tool_error_004",
+      "category": "tool_error",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    },
+    {
+      "id": "tool_error_005",
+      "category": "tool_error",
+      "kind": "code_change",
+      "difficulty": "",
+      "dataset_version": ""
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+--- a/work.py
++++ b/work.py
+@@ -1,2 +1,2 @@
+ def first(items):
+-    return items[0]
++    return items[0] if items else None

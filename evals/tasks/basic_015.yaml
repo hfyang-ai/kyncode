@@ -1,0 +1,11 @@
+id: basic_015
+category: basic
+kind: code_change
+title: 补全类型注解且不改行为
+prompt: 'funcs.py 里的函数都没有类型注解。给每个函数的参数和返回值补上类型注解。
+
+  不要改变任何函数的行为。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

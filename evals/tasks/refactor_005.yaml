@@ -1,0 +1,11 @@
+id: refactor_005
+category: refactor
+kind: code_change
+title: 解耦全局可变状态
+prompt: 'settings.py 里有一个模块级可变字典 config，两个函数直接修改它。
+
+  改为提供一个 get_config() 函数返回 config 的副本，让外部修改不会影响原值。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

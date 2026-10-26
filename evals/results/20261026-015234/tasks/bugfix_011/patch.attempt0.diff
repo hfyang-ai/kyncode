@@ -1,0 +1,6 @@
+--- a/work.py
++++ b/work.py
+@@ -1,2 +1,2 @@
+ def average(nums):
+-    return sum(nums) / len(nums) + 1
++    return sum(nums) / len(nums)

@@ -1,0 +1,11 @@
+id: bugfix_007
+category: bugfix
+kind: code_change
+title: 修复排序方向
+prompt: 'work.py 的 sorted_desc(items) 应该返回降序结果，但现在返回了升序。
+
+  请修复。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

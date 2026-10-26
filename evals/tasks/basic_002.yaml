@@ -1,0 +1,12 @@
+id: basic_002
+category: basic
+kind: answer_match
+title: 统计多文件总行数
+prompt: 'data/ 目录下有 a.txt、b.txt、c.txt 三个文件。统计它们的总行数（空行也算一行）。
+
+  只输出一个整数。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: answer_match
+  answer_pattern: \b6\b

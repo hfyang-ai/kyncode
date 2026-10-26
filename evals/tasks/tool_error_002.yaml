@@ -1,0 +1,11 @@
+id: tool_error_002
+category: tool_error
+kind: code_change
+title: 从语法错误恢复
+prompt: '运行 pytest 会报语法错误（SyntaxError）。阅读报错信息，修复 work.py 的语法错误，
+
+  使测试通过。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

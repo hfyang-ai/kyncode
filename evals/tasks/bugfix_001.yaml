@@ -1,0 +1,11 @@
+id: bugfix_001
+category: bugfix
+kind: code_change
+title: 修复除零错误
+prompt: 'work.py 的 divide(a, b) 在 b 为 0 时会崩溃。
+
+  请修复它，使得当除数为 0 时返回 0，其余情况正常相除。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

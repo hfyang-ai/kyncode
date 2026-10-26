@@ -1,0 +1,11 @@
+id: tool_error_005
+category: tool_error
+kind: code_change
+title: 从键错误恢复
+prompt: '运行 main.py 会报 KeyError：字典里没有 ''age'' 键。
+
+  阅读报错信息，修复 main.py 使其不再崩溃并正确返回 name 的值。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

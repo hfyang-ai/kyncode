@@ -1,0 +1,10 @@
+{
+  "resolved": true,
+  "fail_to_pass_passed": [],
+  "pass_to_pass_passed": [],
+  "failed": [],
+  "p2p_failed": [],
+  "detail": "mock: answer matched",
+  "infra_failure": false,
+  "answer_matched": true
+}

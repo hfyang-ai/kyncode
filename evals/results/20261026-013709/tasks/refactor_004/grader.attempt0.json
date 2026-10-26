@@ -1,0 +1,14 @@
+{
+  "resolved": false,
+  "fail_to_pass_passed": [],
+  "pass_to_pass_passed": [],
+  "failed": [
+    "test_p2p_regression"
+  ],
+  "p2p_failed": [
+    "test_p2p_regression"
+  ],
+  "detail": "mock: 修复过程中破坏了原有功能（P2P 失败）",
+  "infra_failure": false,
+  "answer_matched": false
+}

@@ -1,0 +1,11 @@
+id: refactor_002
+category: refactor
+kind: code_change
+title: 移动函数到新模块
+prompt: 'utils.py 里有 helper_a 和 helper_b 两个函数。
+
+  把 helper_b 移到新建的 newmod.py，并在 utils.py 里通过导入保持可访问。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

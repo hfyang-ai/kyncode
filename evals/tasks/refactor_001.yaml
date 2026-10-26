@@ -1,0 +1,11 @@
+id: refactor_001
+category: refactor
+kind: code_change
+title: 抽取重复代码到公共模块
+prompt: 'a.py 和 b.py 里都有一个 process 函数，实现完全相同。
+
+  把它抽取到新建的 shared.py，并让 a.py、b.py 从 shared 导入。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

@@ -1,0 +1,12 @@
+id: long_context_004
+category: long_context
+kind: answer_match
+title: 汇总多模块公开函数数
+prompt: 'pkg 包里有 10 个模块，每个模块定义一个 func_XX 函数。
+
+  统计这个包里总共有多少个 func_ 开头的公开函数。只输出一个整数。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: answer_match
+  answer_pattern: \b10\b

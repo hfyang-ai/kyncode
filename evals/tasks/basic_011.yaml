@@ -1,0 +1,11 @@
+id: basic_011
+category: basic
+kind: code_change
+title: 消除硬编码改用配置常量
+prompt: 'config.py 里定义了 PORT = 8000。server.py 里硬编码了 port = 8080。
+
+  修改 server.py，让它使用 config.py 的 PORT 常量。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

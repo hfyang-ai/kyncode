@@ -1,0 +1,11 @@
+id: long_context_001
+category: long_context
+kind: code_change
+title: 多文件包中定位错误函数
+prompt: 'pkg 包里有 12 个模块 mod_00 到 mod_11，每个定义一个 func_XX(x) = x * XX。
+
+  其中有一个模块把乘数错写成了 999。找出并修复这个错误。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

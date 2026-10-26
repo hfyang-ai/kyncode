@@ -1,0 +1,17 @@
+[project]
+name = "kyncode-evals"
+version = "0.1.0"
+description = "Evaluation harness for KynCode: task suite, runner, grader, metrics and report"
+requires-python = ">=3.11"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+evals = "runner:main"
+
+[dependency-groups]
+dev = ["pytest>=9.0.3"]
+
+[tool.ruff.lint]
+select = ["F", "I", "E4", "E7", "E9"]

@@ -1,0 +1,11 @@
+id: long_context_010
+category: long_context
+kind: code_change
+title: 多文件配置一致
+prompt: '有 dev.yaml、staging.yaml、prod.yaml 三个配置文件，它们的 port 分别是 8000、8001、8002。
+
+  请统一为 8000（只改 staging 和 prod）。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

@@ -1,0 +1,11 @@
+id: bugfix_002
+category: bugfix
+kind: code_change
+title: 修复 off-by-one
+prompt: 'work.py 的 last(items) 想返回列表最后一个元素，但现在会抛 IndexError。
+
+  请修复索引错误，使其正确返回最后一个元素。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

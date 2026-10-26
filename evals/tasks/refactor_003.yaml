@@ -1,0 +1,11 @@
+id: refactor_003
+category: refactor
+kind: code_change
+title: 抽取基类消除重复
+prompt: 'cat.py 和 dog.py 里各有一个 speak 方法，逻辑类似。
+
+  抽取一个 Animal 基类（放在 animal.py），让 Cat、Dog 继承它。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass

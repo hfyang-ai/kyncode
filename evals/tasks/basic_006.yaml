@@ -1,0 +1,12 @@
+id: basic_006
+category: basic
+kind: answer_match
+title: 理解函数行为
+prompt: '阅读 math_utils.py。调用 multiply(3, 4) 会返回什么？
+
+  只输出一个整数。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: answer_match
+  answer_pattern: \b12\b

@@ -1,0 +1,11 @@
+id: long_context_009
+category: long_context
+kind: code_change
+title: 拆分长函数为子函数
+prompt: 'pipeline.py 的 process(data) 包含两步：先 strip 清洗，再过滤空串。
+
+  把它拆成 step1(data) 和 step2(cleaned) 两个子函数，process 调用它们。'
+timeout_seconds: 300
+max_retries: 0
+grader:
+  type: fail_to_pass
