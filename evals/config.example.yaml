@@ -1,0 +1,27 @@
+# evals 测评配置
+
+# 驱动执行的 CLI：默认 kyncode（本项目），可替换为其他兼容 `-p --output-format stream-json` 的 agent
+# 注意：真实跑（--live）需要能解析到可执行文件，这里用绝对路径（kyncode 未装在系统 PATH）。
+agent_bin: 「kyncode 目录路径」/.venv/bin/kyncode
+
+# 待测 agent 的 config.yaml 路径。adapter 会读取其中 providers 并注入到每个 workspace，
+# 让 agent 在隔离工作区里也能找到 provider 配置；同时会去掉 mcp_servers（eval 时 npx 启动 MCP 会卡住）。
+# 留空则不注入（agent 依赖自身 config 查找逻辑）。
+agent_config: ../config.yaml
+
+# 版本对比用标识：写入 manifest.json，便于区分不同版本的测评结果（可选）
+agent_version: ""
+model: ""
+
+# 单任务超时（秒）与默认重试次数（0 = 只跑一次）
+default_timeout_seconds: 600
+default_retries: 0
+
+# 结果输出根目录
+work_root: results
+
+# 可选：模型定价（美元 / 每百万 token），用于计算「单任务成本」。
+# 未配置时报告里「单任务成本」显示为「未配置价格」。
+# pricing:
+#   input_per_1m: 0.27
+#   output_per_1m: 1.10
