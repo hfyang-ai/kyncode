@@ -15,6 +15,13 @@ class PermissionMode(str, Enum):
     BYPASS = "bypassPermissions"
 
 
+# Fallback decision per tool category when no earlier permission layer
+# (dangerous-command check, path sandbox, rule engine) produced a verdict.
+#
+#   read    - always allowed; reading is non-destructive.
+#   write   - ask by default; auto-allowed in acceptEdits/bypass.
+#   command - ask unless bypass; OS sandbox may still auto-allow earlier.
+#   network - always ask except bypass (external side effects).
 _MODE_MATRIX: dict[PermissionMode, dict[ToolCategory, DecisionEffect]] = {
     PermissionMode.DEFAULT: {
         "read": "allow",
@@ -44,4 +51,9 @@ _MODE_MATRIX: dict[PermissionMode, dict[ToolCategory, DecisionEffect]] = {
 
 
 def mode_decide(mode: PermissionMode, category: ToolCategory) -> DecisionEffect:
+    """Return the fallback effect for a mode/category pair.
+
+    An unknown mode or category propagates KeyError, as before; callers only
+    pass validated enum values.
+    """
     return _MODE_MATRIX[mode][category]

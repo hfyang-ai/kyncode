@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-from dataclasses import dataclass
 from typing import Any
 
-from kyncode.permissions.dangerous import DangerousCommandDetector, is_safe_command
-from kyncode.permissions.modes import DecisionEffect, PermissionMode, mode_decide
-from kyncode.permissions.rules import Rule, RuleEngine, evaluate_rules, extract_content
+from kyncode.permissions.dangerous import DangerousCommandDetector
+from kyncode.permissions.decision_layers import (
+    Decision,
+    DecisionContext,
+    decide,
+    is_plan_file,
+)
+from kyncode.permissions.modes import PermissionMode
+from kyncode.permissions.rules import RuleEngine, extract_content
 from kyncode.permissions.sandbox import PathSandbox
 from kyncode.tools.base import Tool
 from kyncode.tools.redact import redact_sensitive
@@ -16,17 +20,7 @@ from kyncode.tracing import TRACE_ARGS_LIMIT, current_agent_id, truncate
 
 log = logging.getLogger(__name__)
 
-_PLAN_MODE_ALLOWED_TOOLS = frozenset(
-    {"Agent", "ToolSearch", "AskUserQuestion", "ExitPlanMode"}
-)
-# mcp_call 刻意不进 plan 白名单：ToolSearch 只是读 schema，而 mcp_call 会真的
-# 打到外部服务、可能改状态，plan 模式下仍要按权限规则逐个确认。
-
-
-@dataclass
-class Decision:
-    effect: DecisionEffect
-    reason: str
+__all__ = ["Decision", "PermissionChecker"]
 
 
 class PermissionChecker:
@@ -43,16 +37,17 @@ class PermissionChecker:
         self.rule_engine = rule_engine
         self.mode = mode
         self.plan_file_path: str = ""
-        # OS 级沙箱是否启用（开启后命令类工具可自动放行，因为内核会兜底）
+        # OS-level sandbox flag: when enabled, command tools may be auto-allowed
+        # because the kernel provides the isolation guarantees.
         self.sandbox_enabled = sandbox_enabled
 
     @staticmethod
     def describe_tool_action(tool_name: str, arguments: dict[str, Any]) -> str:
-        """为 HITL 确认生成人类可读的操作描述。"""
+        """Build a human-readable action description for HITL confirmation."""
         content = extract_content(tool_name, arguments)
         if content:
             return content
-        # 无法从标准字段提取时，拼接参数摘要
+        # Fall back to an argument summary when no standard field can be extracted.
         parts = []
         for k, v in arguments.items():
             sv = str(v)
@@ -63,8 +58,9 @@ class PermissionChecker:
 
     def check(self, tool: Tool, arguments: dict[str, Any]) -> Decision:
         decision = self._decide(tool, arguments)
-        # 审计日志：每次裁决（allow/deny/ask）都结构化落盘，参数脱敏 + 截断，
-        # 让安全审计能追溯「谁在什么模式下对什么工具做出了什么决定、为什么」。
+        # Audit log: every decision (allow/deny/ask) is recorded with redacted and
+        # truncated arguments, so security audits can trace who decided what, under
+        # which mode, and why.
         log.info(
             "permission_check %s",
             redact_sensitive(
@@ -90,104 +86,15 @@ class PermissionChecker:
 
     def _decide(self, tool: Tool, arguments: dict[str, Any]) -> Decision:
         content = extract_content(tool.name, arguments)
-
-        # 规则快照按需取一次：安全命令、危险命令这些在前面几层就返回，压根不必碰规则文件；
-        # 复合命令逐条检查子命令时共用同一份快照，不重复读盘
-        snapshot: list[Rule] | None = None
-
-        def rules() -> list[Rule]:
-            nonlocal snapshot
-            if snapshot is None:
-                snapshot = self.rule_engine.snapshot()
-            return snapshot
-
-        # Layer 0: Plan 模式例外放行
-        if self.mode == PermissionMode.PLAN:
-            if tool.name in _PLAN_MODE_ALLOWED_TOOLS:
-                return Decision(effect="allow", reason="Plan mode: allowed tool")
-            if (
-                tool.name in ("WriteFile", "EditFile")
-                and content
-                and self._is_plan_file(content)
-            ):
-                return Decision(effect="allow", reason="Plan mode: plan file write")
-
-        # Layer 1: 安全的只读命令（自动放行）
-        if tool.category == "command" and is_safe_command(content or ""):
-            return Decision(effect="allow", reason="Safe read-only command")
-
-        # Layer 1b: 危险命令黑名单（仅 Bash）
-        if tool.category == "command":
-            hit, reason = self.detector.detect(content)
-            if hit:
-                return Decision(effect="deny", reason=f"危险命令拦截: {reason}")
-
-        # Layer 1c: OS 沙箱自动放行
-        # 沙箱开启时，命令类工具通过了危险命令检查后直接放行——
-        # 内核级隔离会阻止越权写入，无需再弹确认。
-        # 拆分复合命令逐条检查，防止通过命令拼接绕过权限检查，
-        # deny 规则和 ask 规则不受沙箱影响。
-        if self.sandbox_enabled and tool.category == "command":
-            import re
-
-            subcommands = [
-                s.strip()
-                for s in re.split(r"\s*(?:&&|\|\||[;|])\s*", content)
-                if s.strip()
-            ]
-            if not subcommands:
-                subcommands = [content]
-            has_ask = False
-            for sub in subcommands:
-                rule_result = evaluate_rules(rules(), tool.name, sub)
-                if rule_result == "deny":
-                    return Decision(effect="deny", reason="权限规则拒绝")
-                if rule_result == "ask":
-                    has_ask = True
-            if has_ask:
-                return Decision(effect="ask", reason="权限规则要求确认")
-            return Decision(effect="allow", reason="OS 沙箱自动放行")
-
-        # Layer 2: 路径沙箱（仅文件类工具）
-        if tool.category in ("read", "write") and content:
-            # 受保护路径优先判定：写入权限配置或 Skill 定义一律拒绝，bypass 模式同样拦截
-            if tool.category == "write":
-                ok, reason = self.sandbox.check_deny_write(content)
-                if not ok:
-                    return Decision(effect="deny", reason=f"受保护路径: {reason}")
-            ok, reason = self.sandbox.check(content)
-            if not ok and self.mode != PermissionMode.BYPASS:
-                return Decision(effect="ask", reason=f"路径沙箱拦截: {reason}")
-
-        # Layer 3: 规则引擎匹配
-        rule_result = evaluate_rules(rules(), tool.name, content)
-        if rule_result == "allow":
-            return Decision(effect="allow", reason="权限规则放行")
-        if rule_result == "ask":
-            return Decision(effect="ask", reason="权限规则要求确认")
-        if rule_result == "deny":
-            return Decision(effect="deny", reason="权限规则拒绝")
-
-        # Layer 4: 权限模式兜底判定
-        effect = mode_decide(self.mode, tool.category)
-        if effect == "allow":
-            return Decision(effect="allow", reason=f"权限模式 {self.mode.value} 放行")
-        if effect == "deny":
-            return Decision(effect="deny", reason=f"权限模式 {self.mode.value} 拒绝")
-
-        # Layer 5: 触发人工确认（HITL）
-        return Decision(effect="ask", reason="需要用户确认")
+        ctx = DecisionContext(
+            detector=self.detector,
+            sandbox=self.sandbox,
+            rule_engine=self.rule_engine,
+            mode=self.mode,
+            plan_file_path=self.plan_file_path,
+            sandbox_enabled=self.sandbox_enabled,
+        )
+        return decide(ctx, tool, content)
 
     def _is_plan_file(self, target_path: str) -> bool:
-        if not self.plan_file_path or not target_path:
-            return ".kyncode/plans/" in target_path
-        try:
-            abs_target = os.path.abspath(target_path)
-            abs_plan = os.path.abspath(self.plan_file_path)
-            if abs_target == abs_plan:
-                return True
-        except Exception:
-            return False
-        if os.path.basename(target_path) == os.path.basename(self.plan_file_path):
-            return True
-        return ".kyncode/plans/" in target_path
+        return is_plan_file(target_path, self.plan_file_path)

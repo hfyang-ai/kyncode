@@ -1,28 +1,21 @@
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
+
+from kyncode.permissions.path_policy import (
+    DEFAULT_DENY_WRITE,
+    is_under,
+    matches_deny_write,
+    resolve_allowed_roots,
+    resolve_deny_write_paths,
+    resolve_real_path,
+)
 
 
 class PathSandbox:
-    # 默认禁写路径：这些文件包含敏感配置，不允许 Agent 直接修改。
-    # 前三条是 kyncode 自身的权限配置（相对 project_root）；其余是用户级
-    # 敏感凭证 / 密钥 / shell 配置（以 ~ 开头，会 expanduser 成绝对路径），
-    # 保证即便 project_root 是 home 目录，这些文件也始终被保护。
-    _DEFAULT_DENY_WRITE: list[str] = [
-        ".kyncode/config.yaml",
-        ".kyncode/permissions.local.yaml",
-        ".kyncode/skills/",
-        "~/.ssh/",
-        "~/.aws/",
-        "~/.gnupg/",
-        "~/.netrc",
-        "~/.bashrc",
-        "~/.zshrc",
-        "~/.profile",
-        "~/.bash_profile",
-        "~/.zprofile",
-    ]
+    # Default deny-write paths. Kept as a class attribute for callers that
+    # inspect it; the canonical list lives in path_policy.
+    _DEFAULT_DENY_WRITE: list[str] = DEFAULT_DENY_WRITE
 
     def __init__(
         self,
@@ -30,23 +23,13 @@ class PathSandbox:
         extra_allowed: list[str] | None = None,
         deny_write: list[str] | None = None,
     ) -> None:
-        # 原始工作区根：绝对、但不解析 symlink。用于生成「整区授权」的规则前缀，
-        # 保证前缀与 LLM 传入的绝对路径（同样不解析 symlink）保持一致。
+        # Raw workspace root: absolute but symlinks unresolved. Used to build
+        # the whole-workspace allow pattern so the prefix matches the absolute
+        # paths the LLM passes in (also symlink-unresolved).
         self._raw_root = Path(project_root).absolute()
         root = self._raw_root.resolve()
-        self._allowed_roots: list[Path] = [root, Path(tempfile.gettempdir()).resolve()]
-        if extra_allowed:
-            for p in extra_allowed:
-                self._allowed_roots.append(Path(p).resolve())
-
-        # 禁写路径列表：先 expanduser 展开 ~，再判断相对/绝对——
-        # 相对路径基于 project_root 解析，绝对路径（含 ~ 展开后的）原样保留。
-        self._deny_write: list[Path] = []
-        for dp in deny_write or self._DEFAULT_DENY_WRITE:
-            dp_path = Path(dp).expanduser()
-            if not dp_path.is_absolute():
-                dp_path = root / dp_path
-            self._deny_write.append(dp_path.resolve())
+        self._allowed_roots: list[Path] = resolve_allowed_roots(root, extra_allowed)
+        self._deny_write: list[Path] = resolve_deny_write_paths(deny_write, root)
 
     @property
     def project_root(self) -> Path:
@@ -54,52 +37,22 @@ class PathSandbox:
 
     @property
     def raw_root(self) -> Path:
-        """未解析 symlink 的工作区根，用于生成整区授权的规则前缀。"""
+        """Unresolved workspace root, used for whole-area allow patterns."""
         return self._raw_root
 
     def _is_deny_write(self, real_path: Path) -> bool:
-        """检查路径是否命中禁写列表。
-
-        支持目录前缀匹配：如果禁写项以 / 结尾或本身是目录，
-        则该目录下的所有文件都被禁止写入。
-        """
-        for deny_path in self._deny_write:
-            # 精确匹配
-            if real_path == deny_path:
-                return True
-            # 目录前缀匹配
-            try:
-                real_path.relative_to(deny_path)
-                return True
-            except ValueError:
-                continue
-        return False
+        """Whether the path hits a deny-write entry (exact or nested under it)."""
+        return matches_deny_write(real_path, self._deny_write)
 
     def _resolve(self, path: str) -> tuple[Path | None, str]:
-        """把输入路径解析成真实绝对路径，解析不了时返回原因"""
-        p = Path(path).expanduser()
-        if not p.is_absolute():
-            p = self.project_root / p
-        abs_path = p.absolute()
-
-        try:
-            return abs_path.resolve(strict=True), ""
-        except OSError:
-            ancestor = abs_path
-            while not ancestor.exists():
-                parent = ancestor.parent
-                if parent == ancestor:
-                    return None, f"无法解析路径: {path}"
-                ancestor = parent
-            try:
-                resolved_ancestor = ancestor.resolve(strict=True)
-            except OSError:
-                return None, f"无法解析路径: {path}"
-            return resolved_ancestor / abs_path.relative_to(ancestor), ""
+        """Resolve an input path to a real absolute path, or a reason on failure."""
+        return resolve_real_path(path, self.project_root)
 
     def check_deny_write(self, path: str) -> tuple[bool, str]:
-        """单独检查受保护路径。这类路径存放权限配置与 Skill 定义，
-        任何权限模式下都不允许写入，调用方需要在模式判断之前调用它。
+        """Check protected paths only.
+
+        These paths hold permission configuration and skill definitions and are
+        never writable in any mode; callers must check this before mode logic.
         """
         real_path, err = self._resolve(path)
         if real_path is None:
@@ -113,31 +66,25 @@ class PathSandbox:
         if real_path is None:
             return False, err
 
-        # 禁写检查优先于允许检查
+        # Deny-write takes precedence over the allow check.
         if self._is_deny_write(real_path):
             return False, f"路径 {path} 在禁写列表中"
 
         for root in self._allowed_roots:
-            try:
-                real_path.relative_to(root)
+            if is_under(real_path, root):
                 return True, ""
-            except ValueError:
-                continue
 
         return False, f"路径 {path} 超出沙箱范围"
 
     def is_within_project(self, path: str) -> bool:
-        """判断路径是否落在工作区根目录（project_root）内。
+        """Whether the path lives under the workspace root.
 
-        与 :meth:`check` 不同，这里只认工作区根，不含临时目录等额外允许根——
-        用于「允许并不再询问」的授权面判定：工作区内文件泛化成整区授权，
-        工作区外文件仍逐个询问。
+        Unlike :meth:`check`, only the workspace root counts here (not the temp
+        dir or extra allow roots). Used for the "allow and don't ask again"
+        grant surface: in-workspace files generalize to the whole workspace,
+        while out-of-workspace files keep asking.
         """
         real_path, _ = self._resolve(path)
         if real_path is None:
             return False
-        try:
-            real_path.relative_to(self.project_root)
-            return True
-        except ValueError:
-            return False
+        return is_under(real_path, self.project_root)
