@@ -142,7 +142,7 @@ class Bash(Tool):
         是只读白名单命令（且不含重定向写 / 命令替换 / 执行语义）才判安全，因此
         纯只读的管道和 && 串联也能安全并发，含危险段的复合命令仍被排除。
         """
-        from kyncode.permissions.dangerous import is_safe_command
+        from kyncode.permissions.command_policy import is_safe_command
 
         command = args.get("command")
         return isinstance(command, str) and is_safe_command(command)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from kyncode.permissions.dangerous.patterns import _DANGEROUS_PATTERNS
+from kyncode.permissions.command_policy.patterns import _DANGEROUS_PATTERNS
 
 
 class DangerousCommandDetector:

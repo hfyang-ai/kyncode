@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from kyncode.permissions.dangerous import (
+from kyncode.permissions.command_policy import (
     DangerousCommandDetector,
     is_safe_command,
 )
-from kyncode.permissions.dangerous.patterns import _DANGEROUS_PATTERNS
-from kyncode.permissions.dangerous.safe import (
+from kyncode.permissions.command_policy.allowlist import (
     _SAFE_COMMANDS,
     _has_execution_semantics,
     _is_safe_single_command,
     _split_compound,
 )
+from kyncode.permissions.command_policy.patterns import _DANGEROUS_PATTERNS
 
 
 class TestCompoundSplitting:
@@ -52,7 +52,7 @@ class TestSafeCommandAnalysis:
         assert not _is_safe_single_command("   ")
 
     def test_execution_semantics_detection(self) -> None:
-        assert _has_execution_semantics('awk \'BEGIN{system("id")}\'')
+        assert _has_execution_semantics("awk 'BEGIN{system(\"id\")}'")
         assert _has_execution_semantics("find . -exec rm {} ;")
         assert _has_execution_semantics("find . -delete")
         assert _has_execution_semantics("sed -i 's/a/b/' f")

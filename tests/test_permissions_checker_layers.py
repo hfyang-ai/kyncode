@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from kyncode.permissions.checker import Decision, PermissionChecker
-from kyncode.permissions.dangerous import DangerousCommandDetector
+from kyncode.permissions.command_policy import DangerousCommandDetector
 from kyncode.permissions.decision_layers import (
     LAYERS,
     DecisionContext,

@@ -4,7 +4,7 @@ from kyncode.permissions.approval import (
     PermissionResponse,
 )
 from kyncode.permissions.checker import Decision, PermissionChecker
-from kyncode.permissions.dangerous import DangerousCommandDetector
+from kyncode.permissions.command_policy import DangerousCommandDetector
 from kyncode.permissions.modes import DecisionEffect, PermissionMode, mode_decide
 from kyncode.permissions.rules import (
     Rule,

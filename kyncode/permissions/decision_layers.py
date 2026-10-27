@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from kyncode.permissions.dangerous import DangerousCommandDetector, is_safe_command
+from kyncode.permissions.command_policy import DangerousCommandDetector, is_safe_command
 from kyncode.permissions.modes import DecisionEffect, PermissionMode, mode_decide
 from kyncode.permissions.rules import Rule, RuleEngine, evaluate_rules
 from kyncode.permissions.sandbox import PathSandbox
@@ -100,7 +100,9 @@ def plan_mode_layer(ctx: DecisionContext, tool: Tool, content: str) -> Decision 
     return None
 
 
-def safe_command_layer(ctx: DecisionContext, tool: Tool, content: str) -> Decision | None:
+def safe_command_layer(
+    ctx: DecisionContext, tool: Tool, content: str
+) -> Decision | None:
     """Layer 1: safe read-only commands are auto-allowed."""
     if tool.category == "command" and is_safe_command(content or ""):
         return Decision(effect="allow", reason="Safe read-only command")
@@ -141,7 +143,9 @@ def sandbox_auto_allow_layer(
     return Decision(effect="allow", reason="OS 沙箱自动放行")
 
 
-def path_sandbox_layer(ctx: DecisionContext, tool: Tool, content: str) -> Decision | None:
+def path_sandbox_layer(
+    ctx: DecisionContext, tool: Tool, content: str
+) -> Decision | None:
     """Layer 2: path sandbox for file tools."""
     if tool.category not in ("read", "write") or not content:
         return None

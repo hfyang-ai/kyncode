@@ -328,7 +328,7 @@ async def _run_consolidation(work_dir, api_key, base_url, model, mem_dir):
         registry.register(tool_cls())
 
     from kyncode.permissions.checker import PermissionMode
-    from kyncode.permissions.dangerous import DangerousCommandDetector
+    from kyncode.permissions.command_policy import DangerousCommandDetector
     from kyncode.permissions.rules import RuleEngine
     from kyncode.permissions.sandbox import PathSandbox
 

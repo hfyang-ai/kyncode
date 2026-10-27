@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any
 
-from kyncode.permissions.dangerous import DangerousCommandDetector
+from kyncode.permissions.command_policy import DangerousCommandDetector
 from kyncode.permissions.decision_layers import (
     Decision,
     DecisionContext,

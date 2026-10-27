@@ -39,7 +39,7 @@ from kyncode.permissions import (
     parse_rule,
     strip_cd_prefix,
 )
-from kyncode.permissions.dangerous import is_safe_command
+from kyncode.permissions.command_policy import is_safe_command
 from kyncode.tools import create_default_registry
 from kyncode.tools.base import StreamEnd, StreamEvent, TextDelta, ToolCallComplete
 
@@ -487,7 +487,9 @@ class TestRuleEngine:
         tmpdir = Path(tempfile.mkdtemp())
         local_path = tmpdir / ".kyncode" / "permissions.local.yaml"
         engine = RuleEngine(local_rules_path=local_path)
-        engine.append_local_rule(Rule(tool_name="Bash", pattern="git *", effect="allow"))
+        engine.append_local_rule(
+            Rule(tool_name="Bash", pattern="git *", effect="allow")
+        )
         engine.append_local_rule(
             Rule(tool_name="Bash", pattern="git commit *", effect="allow")
         )
@@ -502,8 +504,12 @@ class TestRuleEngine:
         tmpdir = Path(tempfile.mkdtemp())
         local_path = tmpdir / ".kyncode" / "permissions.local.yaml"
         engine = RuleEngine(local_rules_path=local_path)
-        engine.append_local_rule(Rule(tool_name="Bash", pattern="git *", effect="allow"))
-        engine.append_local_rule(Rule(tool_name="Bash", pattern="npm *", effect="allow"))
+        engine.append_local_rule(
+            Rule(tool_name="Bash", pattern="git *", effect="allow")
+        )
+        engine.append_local_rule(
+            Rule(tool_name="Bash", pattern="npm *", effect="allow")
+        )
 
         loaded = yaml.safe_load(local_path.read_text(encoding="utf-8"))
         assert len(loaded) == 2
@@ -515,7 +521,9 @@ class TestRuleEngine:
         tmpdir = Path(tempfile.mkdtemp())
         local_path = tmpdir / ".kyncode" / "permissions.local.yaml"
         engine = RuleEngine(local_rules_path=local_path)
-        engine.append_local_rule(Rule(tool_name="Bash", pattern="git *", effect="allow"))
+        engine.append_local_rule(
+            Rule(tool_name="Bash", pattern="git *", effect="allow")
+        )
         with caplog.at_level(logging.INFO, logger="kyncode.permissions.rules"):
             engine.append_local_rule(
                 Rule(tool_name="Bash", pattern="git status *", effect="allow")
