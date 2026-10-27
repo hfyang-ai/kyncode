@@ -510,15 +510,42 @@ class Agent:
         if exempt_ids is not None and tool_use_id in exempt_ids:
             return self._guard_readback(text)
         if estimate_text_tokens(text) > MAX_OUTPUT_TOKENS:
+            before_tokens = estimate_text_tokens(text)
             try:
                 fp = persist_tool_result(tool_use_id, text, self.session_dir)
             except OSError:
+                # 写盘失败是静默降级：大结果没能外置，原样保留进历史。必须记下，
+                # 否则「外置失败」永远不可观测。
+                log.warning(
+                    "spill %s",
+                    json.dumps(
+                        {
+                            "event": "write_failed",
+                            "tool_use_id": tool_use_id,
+                            "tokens": before_tokens,
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
                 if exempt_ids is not None:
                     exempt_ids.add(tool_use_id)
                 return text
+            preview = make_persisted_preview(text, fp)
+            log.info(
+                "spill %s",
+                json.dumps(
+                    {
+                        "event": "single",
+                        "tool_use_id": tool_use_id,
+                        "before_tokens": before_tokens,
+                        "after_tokens": estimate_text_tokens(preview),
+                    },
+                    ensure_ascii=False,
+                ),
+            )
             if exempt_ids is not None:
                 exempt_ids.add(tool_use_id)
-            return make_persisted_preview(text, fp)
+            return preview
         return text
 
     def _guard_readback(self, text: str) -> str:

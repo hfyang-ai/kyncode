@@ -79,6 +79,10 @@ MIN_SUMMARIZE_PREFIX_TOKENS = 2_000
 
 PERSISTED_TAG = "persisted-output"
 
+# 摘要前后内容的落盘目录名（相对 sessions/<sid>/）。压缩排障需要看到「丢了什么、
+# 摘要成什么」，但全量写进 debug.log 会撑爆日志，故改为完整落盘、日志只引用路径。
+COMPACT_ARTIFACTS_DIRNAME = "compact-summaries"
+
 
 # ---------------------------------------------------------------------------
 # 事件
@@ -202,30 +206,56 @@ def apply_tool_result_budget(
     接受超额。
     """
     exempt = exempt_ids or set()
-    total = sum(estimate_text_tokens(tr.content) for tr in tool_results)
-    if total <= AGGREGATE_TOKEN_LIMIT:
+    before_tokens = sum(estimate_text_tokens(tr.content) for tr in tool_results)
+    if before_tokens <= AGGREGATE_TOKEN_LIMIT:
         return
 
     # 按 token 数降序挑选：先溢写最大的，回到限额内需要动的条数最少。
+    total = before_tokens
     ranked = sorted(
         tool_results, key=lambda tr: estimate_text_tokens(tr.content), reverse=True
     )
+    spilled = 0
+    skipped_exempt = 0
+    skipped_short = 0
+    write_failed = 0
     for tr in ranked:
         if total <= AGGREGATE_TOKEN_LIMIT:
             break
         if tr.tool_use_id in exempt:
+            skipped_exempt += 1
             continue
         if estimate_text_tokens(tr.content) <= PREVIEW_TOKENS:
             # 比预览还短的结果，溢写换不回空间
+            skipped_short += 1
             continue
         try:
             fp = persist_tool_result(tr.tool_use_id, tr.content, session_dir)
         except OSError:
             # 写盘失败就保留原文。消息随即定型进历史，不会再有重试
+            write_failed += 1
             continue
         preview = make_persisted_preview(tr.content, fp)
         total -= estimate_text_tokens(tr.content) - estimate_text_tokens(preview)
         tr.content = preview
+        spilled += 1
+
+    log.info(
+        "spill %s",
+        json.dumps(
+            {
+                "event": "aggregate",
+                "before_tokens": before_tokens,
+                "after_tokens": total,
+                "reclaimed_tokens": before_tokens - total,
+                "spilled": spilled,
+                "skipped_exempt": skipped_exempt,
+                "skipped_short": skipped_short,
+                "write_failed": write_failed,
+            },
+            ensure_ascii=False,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -272,9 +302,30 @@ def maybe_inject_context_reminder(
     if used_tokens < compute_reminder_threshold(context_window):
         return False
     if conversation.has_reminder_containing(CONTEXT_REMINDER_MARKER):
+        # 去重命中：每轮软线之下都会再查一次，命中是常态，记 DEBUG 避免刷屏。
+        log.debug(
+            "reminder %s",
+            json.dumps(
+                {"event": "deduped", "used_tokens": used_tokens},
+                ensure_ascii=False,
+            ),
+        )
         return False
     conversation.add_system_reminder(
         f"{CONTEXT_REMINDER_MARKER}\n{build_context_reminder(used_tokens, context_window)}"
+    )
+    # 注入成功是关键反馈：直接衡量「提醒线省下了多少次压缩」。
+    log.info(
+        "reminder %s",
+        json.dumps(
+            {
+                "event": "injected",
+                "used_tokens": used_tokens,
+                "context_window": context_window,
+                "pct": max(1, int(used_tokens * 100 / context_window)),
+            },
+            ensure_ascii=False,
+        ),
     )
     return True
 
@@ -851,6 +902,68 @@ def _summary_output_cap(
 
 
 # ---------------------------------------------------------------------------
+# 日志辅助
+# ---------------------------------------------------------------------------
+
+
+def _render_messages_text(messages: list[Message]) -> str:
+    """把消息列表渲染成可读文本，供落盘摘要前内容（被摘要掉的前缀原文）。
+
+    每条消息标注 role，工具调用（名称+参数）与工具结果（含 is_error 标记）
+    简短拼进正文。整体内容完整、不截断，落盘到独立文件供排障还原。
+    """
+    lines: list[str] = []
+    for msg in messages:
+        parts: list[str] = [f"[{msg.role}] {msg.content}"]
+        for tu in msg.tool_uses:
+            parts.append(
+                f"[tool_call:{tu.tool_name} {json.dumps(tu.arguments, ensure_ascii=False)}]"
+            )
+        for tr in msg.tool_results:
+            parts.append(f"[tool_result:{'ERROR ' if tr.is_error else ''}{tr.content}]")
+        lines.append("\n".join(parts))
+    return "\n\n".join(lines)
+
+
+def _persist_compact_artifacts(
+    session_dir: Path, before_text: str, after_text: str
+) -> tuple[str, str]:
+    """把摘要前/后内容完整落盘，返回两个文件的路径（供日志引用）。
+
+    落盘目录放在 session_dir 的上一级（sessions/<sid>/compact-summaries），
+    而非 session_dir 本身——后者会在压缩成功后被 cleanup_tool_results 整体清空，
+    摘要文件若放里面会随之外置回收，排障时就找不到了。落盘失败（目录不可写 /
+    OSError）不阻断压缩主流程，返回空串由日志标注「落盘失败」。
+    """
+    artifacts_dir = session_dir.parent / COMPACT_ARTIFACTS_DIRNAME
+    try:
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return "", ""
+    # 时间戳 + 纳秒后缀保证同秒多次压缩不互相覆盖。
+    stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns()}"
+    before_path = artifacts_dir / f"compact-before-{stamp}.txt"
+    after_path = artifacts_dir / f"compact-after-{stamp}.txt"
+    try:
+        before_path.write_text(before_text, encoding="utf-8")
+    except OSError:
+        before_path = None
+    try:
+        after_path.write_text(after_text, encoding="utf-8")
+    except OSError:
+        after_path = None
+    return str(before_path or ""), str(after_path or "")
+
+
+def _count_spill_files(session_dir: Path) -> int:
+    """统计溢写目录里的文件数，供压缩成功时记录「清理了多少外置文件」。"""
+    try:
+        return sum(1 for p in session_dir.glob("*.txt") if p.is_file())
+    except OSError:
+        return 0
+
+
+# ---------------------------------------------------------------------------
 # Auto-compact 编排器
 # ---------------------------------------------------------------------------
 
@@ -899,9 +1012,12 @@ async def auto_compact(
     # 字符估算。冷启动或刚压缩清空锚点时，退化为对整个 history 做字符估算。
     current = conversation.current_tokens()
 
+    # 触发来源：manual 用户手动 /compact；hard 超过硬线(95%)强制压缩（绕过熔断器）；
+    # soft 软线(85%)之上正常自动压缩。三者落到 success 日志里，hard 是上下文策略
+    # 失效的信号——同样的成功事件，能区分「正常压缩」还是「被逼到 95% 才压缩」。
     if manual:
         # 手动压缩（/compact）：直接走压缩流程，不检查阈值
-        pass
+        trigger = "manual"
     else:
         # 双阈值判断：
         # 1) 软触发线（85%）：低于此线不需要压缩
@@ -917,9 +1033,10 @@ async def auto_compact(
         hard_threshold = compute_compact_threshold(context_window, manual=True)
         if current >= hard_threshold:
             # 强制压缩路径：不检查熔断器
-            pass
+            trigger = "hard"
         else:
             # 处于软硬阈值之间：走正常的熔断器保护逻辑
+            trigger = "soft"
             if breaker is not None and breaker.is_open():
                 log.info(
                     "compact %s",
@@ -950,6 +1067,23 @@ async def auto_compact(
     # 待摘要的前缀太小时退化为不压缩——要么全部消息都落在保留窗口内
     # （keep_start <= 0），要么摘要回收的 token 还不够摘要本身的开销。
     if keep_start <= 0 or _prefix_too_small_to_compact(to_summarize):
+        log.info(
+            "compact %s",
+            json.dumps(
+                {
+                    "event": "skipped",
+                    "reason": (
+                        "keep_start_zero" if keep_start <= 0 else "prefix_too_small"
+                    ),
+                    "trigger": trigger,
+                    "before_tokens": before_tokens,
+                    "keep_start": keep_start,
+                    "prefix_tokens": estimate_tokens(to_summarize),
+                    "min_summarize_prefix_tokens": MIN_SUMMARIZE_PREFIX_TOKENS,
+                },
+                ensure_ascii=False,
+            ),
+        )
         return None
 
     messages_for_summary = build_messages(list(to_summarize), protocol)
@@ -1002,6 +1136,17 @@ async def auto_compact(
 
             # 撞输出上限的摘要是截断的、不完整的，落库会污染后续所有轮次，
             if stop_reason in ("max_tokens", "length"):
+                log.info(
+                    "compact %s",
+                    json.dumps(
+                        {
+                            "event": "retry",
+                            "reason": "summary_truncated",
+                            "stop_reason": stop_reason,
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
                 continue
 
             llm_output = collected_text
@@ -1017,6 +1162,18 @@ async def auto_compact(
                     [summary_conv.history[0]]
                     + [m for g in remaining for m in g]
                     + [summary_conv.history[-1]]
+                )
+                log.info(
+                    "compact %s",
+                    json.dumps(
+                        {
+                            "event": "retry",
+                            "reason": "prompt_too_long",
+                            "dropped_groups": drop_count,
+                            "remaining_groups": len(remaining),
+                        },
+                        ensure_ascii=False,
+                    ),
                 )
                 continue
             if breaker is not None:
@@ -1048,6 +1205,9 @@ async def auto_compact(
     # 旧的 anchor_count 对应压缩前的消息列表，现在已无意义，
     # 不清零会导致 current_tokens() 对增量的估算出错。
     # 下一次 API 响应会基于重建后的 history 重新锚定。
+    # 统计压缩前溢写目录里的文件数，随后清理：这是「外置了多少 → 回收了多少」
+    # 闭环的回收量，之前完全不可观测。
+    removed_spill_files = _count_spill_files(session_dir)
     conversation.replace_history(new_messages)
     cleanup_tool_results(session_dir)
 
@@ -1060,11 +1220,27 @@ async def auto_compact(
     after_tokens = conversation.current_tokens()
     elapsed_ms = round((time.monotonic() - started) * 1000, 2)
     rate = breaker.success_rate if breaker is not None else None
+
+    # 恢复附件规模：压缩后「还记得什么」的排障依据。
+    attachment_files = (
+        len(recovery.snapshot_files(RECOVERY_FILE_LIMIT)) if recovery is not None else 0
+    )
+    attachment_skills = len(recovery.snapshot_skills()) if recovery is not None else 0
+    attachment_tokens = estimate_text_tokens(attachment) if attachment else 0
+
+    # 摘要前后内容完整落盘（before = 被摘要掉的前缀原文，after = 生成的摘要），
+    # 日志只引用文件路径，避免几万 token 的原文撑爆 debug.log。落盘目录与会话隔离、
+    # 且不受 cleanup_tool_results 影响，排障时可完整还原「丢了什么、摘要成什么」。
+    before_summary_path, after_summary_path = _persist_compact_artifacts(
+        session_dir, _render_messages_text(to_summarize), summary
+    )
+
     log.info(
         "compact %s",
         json.dumps(
             {
                 "event": "success",
+                "trigger": trigger,
                 "manual": manual,
                 "before_tokens": before_tokens,
                 "after_tokens": after_tokens,
@@ -1072,6 +1248,14 @@ async def auto_compact(
                 "elapsed_ms": elapsed_ms,
                 "success_rate": None if rate is None else round(rate, 3),
                 "attempts": breaker.attempts if breaker is not None else 0,
+                "summarized_messages": len(to_summarize),
+                "keep_tail_messages": len(keep_tail),
+                "attachment_files": attachment_files,
+                "attachment_skills": attachment_skills,
+                "attachment_tokens": attachment_tokens,
+                "removed_spill_files": removed_spill_files,
+                "before_summary_path": before_summary_path,
+                "after_summary_path": after_summary_path,
             },
             ensure_ascii=False,
         ),
